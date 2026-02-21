@@ -1,0 +1,70 @@
+{
+  "project": "ExampleProject",
+  "branchName": "ralph-moss/example-feature",
+  "description": "Add dark mode toggle to user settings page",
+  "context": "Settings page is at src/pages/Settings.tsx. Theme context at src/contexts/ThemeContext.tsx. User preferences stored in Supabase user_preferences table.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add theme preference column to database",
+      "description": "As a user, I want my theme preference saved to the database so it persists across sessions",
+      "acceptanceCriteria": [
+        "Migration adds theme_preference column (type: text, default: 'system') to user_preferences table",
+        "Migration is reversible",
+        "TypeScript types regenerated and include theme_preference field",
+        "RLS policies allow users to read/write only their own preferences",
+        "TypeScript compiles without errors",
+        "All existing tests pass"
+      ],
+      "filesInScope": [
+        "supabase/migrations/",
+        "src/types/database.types.ts"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Run 'npx supabase gen types typescript' after migration"
+    },
+    {
+      "id": "US-002",
+      "title": "Update ThemeContext to persist preference",
+      "description": "As a user, when I change my theme preference, it should be saved to Supabase automatically",
+      "acceptanceCriteria": [
+        "ThemeContext reads initial theme from Supabase on mount",
+        "Theme changes are persisted to Supabase within 500ms",
+        "Loading state shown while fetching initial preference",
+        "Error state handled gracefully if Supabase call fails",
+        "TypeScript compiles without errors",
+        "Unit tests cover: load preference, save preference, error handling"
+      ],
+      "filesInScope": [
+        "src/contexts/ThemeContext.tsx",
+        "src/__tests__/ThemeContext.test.tsx"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "US-001 must pass first (needs the DB column)"
+    },
+    {
+      "id": "US-003",
+      "title": "Add dark mode toggle to settings page",
+      "description": "As a user, I want to see and change my theme preference from the settings page",
+      "acceptanceCriteria": [
+        "Settings page shows current theme preference (light/dark/system)",
+        "User can change preference via segmented control",
+        "Change is reflected immediately in the UI",
+        "Preference is persisted (from US-002)",
+        "Toggle is accessible via keyboard",
+        "Toggle has appropriate aria-label",
+        "TypeScript compiles without errors",
+        "All existing tests pass"
+      ],
+      "filesInScope": [
+        "src/pages/Settings.tsx",
+        "src/__tests__/Settings.test.tsx"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "US-002 must pass first"
+    }
+  ]
+}

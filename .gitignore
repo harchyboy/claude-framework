@@ -1,0 +1,7 @@
+# Hartz Claude Framework
+agent_logs/
+current_tasks/*.txt
+.ralph_prompt_*
+*.log
+.DS_Store
+node_modules/
