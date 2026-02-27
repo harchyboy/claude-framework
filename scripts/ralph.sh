@@ -19,7 +19,7 @@ set -euo pipefail
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-MAX_ITERATIONS="${1:-20}"
+MAX_ITERATIONS=20
 USE_MAX_PLAN=false
 MAX_COST=""
 QUALITY_GATE=false
@@ -31,8 +31,9 @@ TRACK_COST=true
 TOTAL_COST=0
 START_TIME=$(date +%s)
 
-# Shift past max_iterations if it's a number
+# Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+  MAX_ITERATIONS="$1"
   shift
 fi
 
@@ -112,14 +113,9 @@ pending = [s for s in prd['userStories'] if not s.get('passes', False)]
 print(f'✅ PRD valid: {len(pending)} stories pending')
 " || exit 1
 
-  # Check git is clean (warn but don't fail)
+  # Check git is clean (warn only, never block)
   if ! git diff --quiet 2>/dev/null; then
-    echo "⚠️  Working directory has uncommitted changes"
-    read -p "   Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-      exit 1
-    fi
+    echo "⚠️ Working directory has uncommitted changes — continuing anyway"
   fi
 
   # Ensure branch exists
