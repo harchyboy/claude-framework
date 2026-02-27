@@ -36,6 +36,7 @@ These rules apply to every session, every agent, every task. No exceptions.
 - ALL agent spawns + task creates + tool calls go in ONE message for true parallelism
 
 ### Quality discipline
+- ALWAYS read `docs/CODE-STANDARDS.md` before writing code — it contains mandatory patterns for security, TypeScript, accessibility, data integrity, and API design
 - ALWAYS run existing tests before AND after making changes
 - NEVER leave `TODO` comments in committed code without a linked task in the task list
 - ALWAYS update `PROGRESS.md` after completing any task
@@ -216,19 +217,21 @@ bash scripts/quality-gate.sh
 ```
 Checks: TypeScript compile → ESLint → Tests → No secrets in diff
 
-### Code review scoring (8 dimensions, threshold: 0.85)
-When evaluating completed work, score these dimensions 0.0–1.0:
+### Code review scoring (9 dimensions, threshold: 0.85)
+When evaluating completed work, score these dimensions 0.0–1.0.
+**Review against `docs/CODE-STANDARDS.md`** — violations of documented standards are automatic P1s.
 
 | Dimension | What to check |
 |-----------|---------------|
 | Correctness | Works as specified, handles edge cases |
 | Test quality | Edge cases covered, adequate coverage |
-| Type safety | No `any`, proper generics, exhaustive checks |
-| Security | RLS policies, input validation, auth checks |
-| Performance | No N+1 queries, proper memoization |
-| Error handling | Graceful failures, user-facing messages |
+| Type safety | No `any`, proper generics, exhaustive type guards (CODE-STANDARDS §2) |
+| Security | Auth via headers, input validation, path traversal guards (CODE-STANDARDS §1) |
+| Performance | Parallel I/O, no N+1 queries, pagination on unbounded lists (CODE-STANDARDS §7) |
+| Error handling | Graceful failures, consistent error contracts, resp.ok checks |
+| Accessibility | Label associations, focus management, complete ARIA patterns (CODE-STANDARDS §3) |
+| Data integrity | Atomic writes, validation before persistence, lock TTLs (CODE-STANDARDS §4) |
 | Maintainability | Clear naming, DRY, single responsibility |
-| Documentation | JSDoc on public APIs, README updated |
 
 If `overall_score < 0.85`, create a remediation task with specific fix instructions before marking complete.
 

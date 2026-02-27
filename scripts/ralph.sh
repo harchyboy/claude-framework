@@ -176,21 +176,22 @@ ${prd_content}
 
 ## Instructions
 
-1. **Read first**: Review PROGRESS.md and docs/solutions/ for relevant context
-2. **Check failed approaches**: Read docs/failed-approaches.md before attempting solutions
-3. **Pick a story**: Select the highest-priority story where \`passes: false\`
+1. **Read first**: Review PROGRESS.md, docs/CODE-STANDARDS.md, and docs/solutions/ for relevant context
+2. **Follow code standards**: docs/CODE-STANDARDS.md contains mandatory patterns — apply them during implementation, not after review
+3. **Check failed approaches**: Read docs/failed-approaches.md before attempting solutions
+4. **Pick a story**: Select the highest-priority story where \`passes: false\`
    - Skip any story with a lock file in current_tasks/
-4. **Claim it**: Write \`[story-id] [title]\` to \`current_tasks/[story-id].txt\`
+5. **Claim it**: Write \`[story-id] [title]\` to \`current_tasks/[story-id].txt\`
    - \`git add current_tasks/ && git commit -m "claim: [story-id]" && git push\`
    - If push fails: another agent claimed it — pick a different story
-5. **Implement**: Build the feature with proper TypeScript types and tests
-6. **Test**: Run the quality gate: \`bash scripts/quality-gate.sh\`
+6. **Implement**: Build the feature following docs/CODE-STANDARDS.md patterns
+7. **Test**: Run the quality gate: \`bash scripts/quality-gate.sh\`
    - Fix ALL failures before proceeding
-7. **Update PROGRESS.md**: Add what you did, what's next, any discoveries
-8. **Commit**: Use conventional commit format: \`feat: [description] (closes [story-id])\`
-9. **Update PRD**: Mark story \`passes: true\` in prd.json, commit that too
-10. **Release lock**: \`git rm current_tasks/[story-id].txt && git commit -m "release: [story-id]" && git push\`
-11. **Stop**: Exit after completing ONE story. The loop will restart for the next.
+8. **Update PROGRESS.md**: Add what you did, what's next, any discoveries
+9. **Commit**: Use conventional commit format: \`feat: [description] (closes [story-id])\`
+10. **Update PRD**: Mark story \`passes: true\` in prd.json, commit that too
+11. **Release lock**: \`git rm current_tasks/[story-id].txt && git commit -m "release: [story-id]" && git push\`
+12. **Stop**: Exit after completing ONE story. The loop will restart for the next.
 
 ## Rules
 - NEVER skip the quality gate
