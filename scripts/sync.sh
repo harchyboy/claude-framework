@@ -17,7 +17,7 @@ set -euo pipefail
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY_DIR="$HOME/.hartz-claude-framework"
 REGISTRY_FILE="$REGISTRY_DIR/projects.txt"
-FRAMEWORK_REMOTE="https://github.com/Hartz-AI/claude-framework"
+FRAMEWORK_REMOTE="https://github.com/harchyboy/claude-framework"
 
 # ─── Colours ─────────────────────────────────────────────────────────────────
 
