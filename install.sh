@@ -132,20 +132,24 @@ SETTINGS_SRC="$FRAMEWORK_DIR/.claude/settings.json"
 if [[ -f "$SETTINGS_DEST" ]]; then
   # Merge framework hooks into existing settings (appends, doesn't overwrite)
   if command -v node > /dev/null 2>&1; then
+    # Convert MSYS paths to Windows paths for node
+    local sd_path="$SETTINGS_DEST"
+    local ss_path="$SETTINGS_SRC"
+    if command -v cygpath > /dev/null 2>&1; then
+      sd_path="$(cygpath -w "$SETTINGS_DEST")"
+      ss_path="$(cygpath -w "$SETTINGS_SRC")"
+    fi
     node -e "
 const fs = require('fs');
-const existing = JSON.parse(fs.readFileSync('$SETTINGS_DEST', 'utf8'));
-const framework = JSON.parse(fs.readFileSync('$SETTINGS_SRC', 'utf8'));
+const existing = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const framework = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 
-// Merge env vars
 if (!existing.env) existing.env = {};
 for (const [key, val] of Object.entries(framework.env || {})) {
   existing.env[key] = val;
 }
 
-// Merge hooks — APPEND framework hooks to existing arrays (don't skip or overwrite)
 if (!existing.hooks) existing.hooks = {};
-
 for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   if (!existing.hooks[hookName]) {
     existing.hooks[hookName] = hookEntries;
@@ -165,8 +169,8 @@ for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   }
 }
 
-fs.writeFileSync('$SETTINGS_DEST', JSON.stringify(existing, null, 2));
-"
+fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2));
+" "$sd_path" "$ss_path"
     info "Merged settings into existing settings.json"
   else
     warn "node not found — manually add framework hooks to .claude/settings.json"
