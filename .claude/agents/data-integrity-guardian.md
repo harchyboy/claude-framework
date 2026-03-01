@@ -78,3 +78,14 @@ Safe to run in production: YES / NO / WITH PRECAUTIONS
 Estimated lock time: [seconds/minutes or "none"]
 Rollback available: YES / NO
 ```
+
+## Anti-rationalization rules
+
+| Excuse | Reality |
+|--------|---------|
+| "The app validates this data" | Apps crash. Browsers close. The database is the last line of defence. |
+| "We can fix the data later" | Corrupted data propagates. By the time you notice, dependent records are wrong too. |
+| "This migration is simple" | Simple migrations lock tables in production. Always check lock implications. |
+| "Nobody else writes to this table" | Until they do. Constraints exist for the scenarios you didn't anticipate. |
+| "RLS is overkill for this table" | Every table without RLS is a data breach waiting to happen. No exceptions. |
+| "The cascade is fine" | Fine until someone deletes a parent record and 10,000 children vanish. Be explicit. |

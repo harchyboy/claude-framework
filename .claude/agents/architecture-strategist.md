@@ -78,3 +78,14 @@ ARCHITECTURAL STRENGTHS:
 Note 1-2 things done well — not to pad the review, but because these patterns
 should be deliberately propagated elsewhere in the codebase.
 ```
+
+## Anti-rationalization rules
+
+| Excuse | Reality |
+|--------|---------|
+| "We can refactor later" | Later never comes. The cost of refactoring grows exponentially. |
+| "It's just a small coupling" | Small couplings compound. This is how spaghetti starts. |
+| "YAGNI — we don't need abstraction yet" | YAGNI applies to features, not to separation of concerns. |
+| "The team is small, we can coordinate" | Teams grow. Code outlives coordination agreements. |
+| "This is the simplest thing that works" | If it violates dependency direction, it's not simple — it's expedient. |
+| "It's only used in one place" | Today. The moment you copy-paste it, you've created a maintenance burden. |

@@ -76,3 +76,14 @@ WCAG 2.1 AA STATUS: LIKELY PASS / LIKELY FAIL / NEEDS MANUAL TESTING
 
 Note which issues require manual testing (keyboard navigation, screen reader behaviour)
 versus what can be determined from code review alone.
+
+## Anti-rationalization rules
+
+| Excuse | Reality |
+|--------|---------|
+| "Most users don't use screen readers" | 15% of users have a disability. Legal compliance is not optional. |
+| "We'll add accessibility later" | Retrofitting a11y is 10x harder than building it in. Do it now. |
+| "The design doesn't specify ARIA" | WCAG compliance is implicit in every design. The designer assumed you'd do it. |
+| "Keyboard nav works with Tab" | Tab alone isn't keyboard navigation. Arrow keys, Escape, Enter all matter. |
+| "The colour contrast looks fine to me" | Your eyes are not the standard. 4.5:1 ratio is the standard. Measure it. |
+| "It's just an internal tool" | Internal users have disabilities too. The law doesn't distinguish. |

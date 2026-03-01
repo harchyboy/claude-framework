@@ -43,6 +43,26 @@ These rules apply to every session, every agent, every task. No exceptions.
 - If stuck on the same bug for more than 3 attempts: document it in `docs/failed-approaches.md`, try a fundamentally different strategy
 - ALWAYS check `docs/solutions/` for known patterns before implementing a novel solution
 - NEVER retry a known failed approach — check `docs/failed-approaches.md` first
+- ALWAYS run actual commands and verify output before claiming a task is complete
+
+### Anti-rationalization rules
+
+These are the exact excuses Claude uses to skip steps. None of them are valid.
+
+| Excuse | Reality |
+|--------|---------|
+| "Too simple to test" | Simple code breaks. The test takes 30 seconds to write. |
+| "I'll add tests later" | You won't. Tests written after the fact prove nothing. |
+| "The user didn't ask for tests" | CODE-STANDARDS.md requires them. The user hired a professional. |
+| "I'll fix it in a follow-up" | Follow-ups don't happen. Fix it now or document it as a known issue. |
+| "It's obvious what this does" | It's obvious to you today. It won't be in 3 months. |
+| "The code is self-documenting" | PROGRESS.md updates are not documentation — they're coordination. Update them. |
+| "I've completed the task" | Did you run the code? Did you see the output? Claiming completion without verification is hallucination. |
+| "That's outside the scope" | If it breaks, it's in scope. If it's a security risk, it's in scope. |
+| "The existing code doesn't do this" | The existing code is why we're here. Raise your standard. |
+| "I'm following the spirit of the rules" | Violating the letter of the rules IS violating the spirit. Follow them exactly. |
+
+Violating these rules is not a style preference — it is a quality failure.
 
 ### Coordination discipline (multi-agent)
 - ALL spawns + task creates in ONE message for true parallelism — never sequential spawning
@@ -209,6 +229,27 @@ How to avoid this class of problem in the future.
 
 ---
 
+## AUTOMATED HOOKS
+
+The framework installs these hooks automatically. They run without user action.
+
+| Hook | Trigger | What it does |
+|------|---------|-------------|
+| `session-start.sh` | SessionStart (new/resume/clear/compact) | Injects PROGRESS.md, failed-approaches, task locks into context |
+| `pre-tool-use.sh` | PreToolUse (Write/Edit/Bash only) | Re-reads PROGRESS.md top 30 lines to prevent goal drift |
+| `check-complete.sh` | Stop | Verifies PROGRESS.md was updated; blocks stop if not |
+| `task-completed.sh` | Agent Team task completion | Runs quality gate; checks PROGRESS.md freshness |
+| `teammate-idle.sh` | Agent Team teammate idle | Prompts check for unclaimed tasks before shutdown |
+
+### Session recovery
+After a `/clear` or context compaction, run:
+```bash
+bash scripts/session-catchup.sh
+```
+Parses Claude Code's internal session files to recover what happened after the last PROGRESS.md update.
+
+---
+
 ## QUALITY GATES
 
 ### Pre-commit (run before every commit)
@@ -216,6 +257,13 @@ How to avoid this class of problem in the future.
 bash scripts/quality-gate.sh
 ```
 Checks: TypeScript compile → ESLint → Tests → No secrets in diff
+
+### Code review — two-phase process
+
+**Phase 1: Spec compliance** (runs first, blocks Phase 2 on failure)
+- `spec-compliance-reviewer` — verifies implementation matches requirements/PRD/acceptance criteria
+
+**Phase 2: Quality review** (7 agents, run in parallel)
 
 ### Code review scoring (9 dimensions, threshold: 0.85)
 When evaluating completed work, score these dimensions 0.0–1.0.

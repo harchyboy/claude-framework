@@ -70,3 +70,14 @@ P3 — MINOR (optimisation opportunity):
 
 Be specific about file locations and line numbers. Vague recommendations like
 "improve performance" are not actionable.
+
+## Anti-rationalization rules
+
+| Excuse | Reality |
+|--------|---------|
+| "We only have a few records" | You'll have thousands next month. N+1 queries don't announce themselves. |
+| "Premature optimisation" | N+1 queries, missing indexes, and `select *` are not premature — they're negligent. |
+| "React handles re-renders" | React re-renders everything by default. That's the problem, not the solution. |
+| "The user won't notice" | 100ms delays compound. Users notice cumulative sluggishness. |
+| "We can add caching later" | Caching later means debugging stale data later. Design for it now. |
+| "It's fast on my machine" | Your machine has 32GB RAM and an SSD. The user's phone does not. |

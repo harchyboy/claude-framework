@@ -3,22 +3,37 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "hooks": {
-    "TaskCompleted": [
+    "SessionStart": [
       {
+        "matcher": {},
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/task-completed.sh"
+            "command": "bash .claude/hooks/session-start.sh"
           }
         ]
       }
     ],
-    "TeammateIdle": [
+    "PreToolUse": [
       {
+        "matcher": {
+          "tool_name": "Write|Edit|Bash"
+        },
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/teammate-idle.sh"
+            "command": "bash .claude/hooks/pre-tool-use.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": {},
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/check-complete.sh"
           }
         ]
       }

@@ -14,32 +14,45 @@ then findings are synthesised into a single P1/P2/P3 report.
 
 ## What happens
 
+### Phase 1: Spec compliance (runs FIRST)
 1. Read PROGRESS.md and recent git diff to understand what changed
-2. Check docs/solutions/ for related past issues (learnings-researcher step)
-3. Determine which review agents are relevant based on the changes
-4. Spawn all relevant agents in ONE message (parallel execution)
-5. Each agent reviews independently and reports findings
-6. Synthesise all findings into a single report
-7. Present consolidated P1/P2/P3 list with agent attribution
+2. Spawn `spec-compliance-reviewer` to verify the implementation matches requirements
+3. Wait for spec compliance results before proceeding
+
+### Phase 2: Quality review (parallel)
+4. Check docs/solutions/ for related past issues (learnings-researcher step)
+5. Determine which quality agents are relevant based on the changes
+6. Spawn all relevant quality agents in ONE message (parallel execution)
+7. Each agent reviews independently and reports findings
+
+### Phase 3: Synthesis
+8. Synthesise all findings (spec + quality) into a single report
+9. Present consolidated P1/P2/P3 list with agent attribution
 
 ## Agent selection logic
 
-**Always spawn:**
+**Always spawn first (Phase 1):**
+- `spec-compliance-reviewer` — verifies what was built matches what was asked for
+
+**Always spawn (Phase 2):**
 - `security-sentinel` — any code that touches auth, data, or user input
 - `typescript-reviewer` — any TypeScript changes
 - `architecture-strategist` — any structural or module-level changes
 
-**Spawn when relevant:**
+**Spawn when relevant (Phase 2):**
 - `performance-oracle` — data-heavy features, list views, database queries
 - `data-integrity-guardian` — migrations, schema changes, RLS policies
 - `accessibility-reviewer` — UI component changes
 
 ## Parallelism rule
 
-ALL agent spawns happen in ONE message. Never spawn sequentially.
+Phase 2 quality agents spawn in ONE message. Never spawn sequentially.
 
 ```
-# Correct — one message, all spawns
+# Phase 1 — spec compliance first
+spawn spec-compliance-reviewer → wait for results
+
+# Phase 2 — all quality agents in one message
 [spawn security-sentinel, spawn typescript-reviewer, spawn architecture-strategist]
 
 # Wrong — sequential spawning wastes time

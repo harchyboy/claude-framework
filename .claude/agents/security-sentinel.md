@@ -72,3 +72,14 @@ LEARNINGS CHECK:
 
 If no issues found in a category, skip it entirely — do not write "No issues found".
 Be specific. Vague findings like "improve input validation" are not actionable.
+
+## Anti-rationalization rules
+
+| Excuse | Reality |
+|--------|---------|
+| "This is internal-only code" | Internal code gets exposed. RLS exists because trust boundaries fail. |
+| "The frontend validates this" | Frontends are bypassed with curl. Server-side validation is mandatory. |
+| "Nobody would guess this ID" | UUIDs are not secrets. Enumeration attacks are automated. |
+| "We trust authenticated users" | Authenticated users escalate privileges. Auth ≠ authz. |
+| "This is a low-risk endpoint" | Low-risk endpoints are the entry point for lateral movement. |
+| "The framework handles this" | Does it? Show me the middleware. Frameworks have defaults that get overridden. |

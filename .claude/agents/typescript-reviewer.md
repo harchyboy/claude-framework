@@ -67,3 +67,14 @@ P3 — MINOR (style, modern patterns):
 
 Focus on issues that could cause runtime errors or make the codebase harder to refactor.
 Do not report trivial style preferences unless they indicate a deeper type safety issue.
+
+## Anti-rationalization rules
+
+| Excuse | Reality |
+|--------|---------|
+| "Using `any` is faster for now" | `any` disables the compiler. You just introduced a runtime crash. |
+| "The type assertion is safe here" | If it were safe, you wouldn't need the assertion. Narrow properly. |
+| "TypeScript is just a linter" | TypeScript is a proof system. Defeating it defeats the point. |
+| "This cast works at runtime" | Today. Then someone changes the API and the cast silently returns garbage. |
+| "Generic constraints are overkill" | Unconstrained generics accept anything — including the wrong thing. |
+| "The type is too complex to express" | Use a discriminated union. If it's truly inexpressible, the design is wrong. |

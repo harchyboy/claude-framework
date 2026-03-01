@@ -233,6 +233,65 @@ cmd_push() {
         cp "$FRAMEWORK_DIR/docs/CODE-STANDARDS.md" "$project_dir/docs/CODE-STANDARDS.md"
       fi
 
+      # Merge framework hooks into project settings.json
+      local project_settings="$project_dir/.claude/settings.json"
+      local framework_settings="$FRAMEWORK_DIR/.claude/settings.json"
+      if [[ -f "$project_settings" ]] && [[ -f "$framework_settings" ]]; then
+        if command -v python3 > /dev/null 2>&1; then
+          python3 - <<PYEOF
+import json
+
+with open('$project_settings') as f:
+    existing = json.load(f)
+
+with open('$framework_settings') as f:
+    framework = json.load(f)
+
+# Merge env vars
+if 'env' not in existing:
+    existing['env'] = {}
+for key, val in framework.get('env', {}).items():
+    existing['env'][key] = val
+
+# Merge hooks — append framework hooks to existing arrays
+if 'hooks' not in existing:
+    existing['hooks'] = {}
+
+for hook_name, hook_entries in framework.get('hooks', {}).items():
+    if hook_name not in existing['hooks']:
+        existing['hooks'][hook_name] = hook_entries
+    else:
+        existing_commands = set()
+        for entry in existing['hooks'][hook_name]:
+            if 'command' in entry:
+                existing_commands.add(entry['command'])
+            elif 'hooks' in entry:
+                for h in entry['hooks']:
+                    if 'command' in h:
+                        existing_commands.add(h['command'])
+
+        for new_entry in hook_entries:
+            new_commands = set()
+            if 'command' in new_entry:
+                new_commands.add(new_entry['command'])
+            elif 'hooks' in new_entry:
+                for h in new_entry['hooks']:
+                    if 'command' in h:
+                        new_commands.add(h['command'])
+
+            if not new_commands.intersection(existing_commands):
+                existing['hooks'][hook_name].append(new_entry)
+
+with open('$project_settings', 'w') as f:
+    json.dump(existing, f, indent=2)
+PYEOF
+          info "$name — merged framework hooks into settings.json"
+        fi
+      elif [[ ! -f "$project_settings" ]] && [[ -f "$framework_settings" ]]; then
+        cp "$framework_settings" "$project_settings"
+        info "$name — created settings.json from framework template"
+      fi
+
       # Stage and commit the submodule pointer + updated files
       cd "$project_dir"
       git add .claude-framework .claude/ scripts/ docs/CODE-STANDARDS.md 2>/dev/null || true
