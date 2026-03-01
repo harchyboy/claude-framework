@@ -131,61 +131,45 @@ SETTINGS_SRC="$FRAMEWORK_DIR/.claude/settings.json"
 
 if [[ -f "$SETTINGS_DEST" ]]; then
   # Merge framework hooks into existing settings (appends, doesn't overwrite)
-  if command -v python3 > /dev/null 2>&1; then
-    python3 - <<PYEOF
-import json
+  if command -v node > /dev/null 2>&1; then
+    node -e "
+const fs = require('fs');
+const existing = JSON.parse(fs.readFileSync('$SETTINGS_DEST', 'utf8'));
+const framework = JSON.parse(fs.readFileSync('$SETTINGS_SRC', 'utf8'));
 
-with open('$SETTINGS_DEST') as f:
-    existing = json.load(f)
+// Merge env vars
+if (!existing.env) existing.env = {};
+for (const [key, val] of Object.entries(framework.env || {})) {
+  existing.env[key] = val;
+}
 
-with open('$SETTINGS_SRC') as f:
-    framework = json.load(f)
+// Merge hooks — APPEND framework hooks to existing arrays (don't skip or overwrite)
+if (!existing.hooks) existing.hooks = {};
 
-# Merge env vars
-if 'env' not in existing:
-    existing['env'] = {}
-for key, val in framework.get('env', {}).items():
-    existing['env'][key] = val
+for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
+  if (!existing.hooks[hookName]) {
+    existing.hooks[hookName] = hookEntries;
+  } else {
+    const existingCmds = new Set();
+    for (const entry of existing.hooks[hookName]) {
+      if (entry.command) existingCmds.add(entry.command);
+      if (entry.hooks) entry.hooks.forEach(h => { if (h.command) existingCmds.add(h.command); });
+    }
+    for (const newEntry of hookEntries) {
+      const newCmds = new Set();
+      if (newEntry.command) newCmds.add(newEntry.command);
+      if (newEntry.hooks) newEntry.hooks.forEach(h => { if (h.command) newCmds.add(h.command); });
+      const overlap = [...newCmds].some(c => existingCmds.has(c));
+      if (!overlap) existing.hooks[hookName].push(newEntry);
+    }
+  }
+}
 
-# Merge hooks — APPEND framework hooks to existing arrays (don't skip or overwrite)
-if 'hooks' not in existing:
-    existing['hooks'] = {}
-
-for hook_name, hook_entries in framework.get('hooks', {}).items():
-    if hook_name not in existing['hooks']:
-        # Hook type doesn't exist yet — add it
-        existing['hooks'][hook_name] = hook_entries
-    else:
-        # Hook type already exists — append framework entries if not already present
-        existing_commands = set()
-        for entry in existing['hooks'][hook_name]:
-            # Handle both flat and nested hook formats
-            if 'command' in entry:
-                existing_commands.add(entry['command'])
-            elif 'hooks' in entry:
-                for h in entry['hooks']:
-                    if 'command' in h:
-                        existing_commands.add(h['command'])
-
-        for new_entry in hook_entries:
-            # Check if this framework hook is already present
-            new_commands = set()
-            if 'command' in new_entry:
-                new_commands.add(new_entry['command'])
-            elif 'hooks' in new_entry:
-                for h in new_entry['hooks']:
-                    if 'command' in h:
-                        new_commands.add(h['command'])
-
-            if not new_commands.intersection(existing_commands):
-                existing['hooks'][hook_name].append(new_entry)
-
-with open('$SETTINGS_DEST', 'w') as f:
-    json.dump(existing, f, indent=2)
-PYEOF
+fs.writeFileSync('$SETTINGS_DEST', JSON.stringify(existing, null, 2));
+"
     info "Merged settings into existing settings.json"
   else
-    warn "python3 not found — manually add framework hooks to .claude/settings.json"
+    warn "node not found — manually add framework hooks to .claude/settings.json"
   fi
 else
   cp "$SETTINGS_SRC" "$SETTINGS_DEST"
