@@ -172,6 +172,7 @@ cmd_push() {
   local updated=0
   local skipped=0
   local failed=0
+  local total=0
 
   while IFS= read -r project_dir; do
     local name
@@ -180,7 +181,7 @@ cmd_push() {
 
     if [[ ! -d "$submod" ]]; then
       err "$name — submodule not found"
-      ((failed++))
+      ((failed++)) || true
       continue
     fi
 
@@ -193,7 +194,7 @@ cmd_push() {
 
     if [[ "$current" == "$framework_commit" ]]; then
       ok "$name — already up to date"
-      ((skipped++))
+      ((skipped++)) || true
       continue
     fi
 
@@ -240,10 +241,10 @@ cmd_push() {
         ok "$name — committed submodule update"
       fi
 
-      ((updated++))
+      ((updated++)) || true
     else
       err "$name — update failed (at $new_commit, expected $framework_commit)"
-      ((failed++))
+      ((failed++)) || true
     fi
   done <<< "$projects"
 
@@ -286,7 +287,7 @@ cmd_pull() {
     if [[ ! -f "$framework_file" ]]; then
       info "NEW agent: $name"
       cp "$agent" "$framework_file"
-      ((changes++))
+      ((changes++)) || true
     elif ! diff -q "$agent" "$framework_file" > /dev/null 2>&1; then
       warn "MODIFIED agent: $name"
       echo "    Project version differs from framework."
@@ -294,7 +295,7 @@ cmd_pull() {
       diff --brief "$framework_file" "$agent" 2>/dev/null || true
       cp "$agent" "$framework_file"
       ok "  Updated framework agent: $name"
-      ((changes++))
+      ((changes++)) || true
     fi
   done
 
@@ -308,12 +309,12 @@ cmd_pull() {
     if [[ ! -f "$framework_file" ]]; then
       info "NEW command: $name"
       cp "$cmd" "$framework_file"
-      ((changes++))
+      ((changes++)) || true
     elif ! diff -q "$cmd" "$framework_file" > /dev/null 2>&1; then
       warn "MODIFIED command: $name"
       cp "$cmd" "$framework_file"
       ok "  Updated framework command: $name"
-      ((changes++))
+      ((changes++)) || true
     fi
   done
 
@@ -328,13 +329,13 @@ cmd_pull() {
       info "NEW hook: $name"
       cp "$hook" "$framework_file"
       chmod +x "$framework_file"
-      ((changes++))
+      ((changes++)) || true
     elif ! diff -q "$hook" "$framework_file" > /dev/null 2>&1; then
       warn "MODIFIED hook: $name"
       cp "$hook" "$framework_file"
       chmod +x "$framework_file"
       ok "  Updated framework hook: $name"
-      ((changes++))
+      ((changes++)) || true
     fi
   done
 
@@ -352,7 +353,7 @@ cmd_pull() {
       cp "$script" "$framework_file"
       chmod +x "$framework_file"
       ok "  Updated framework script: $name"
-      ((changes++))
+      ((changes++)) || true
     fi
   done
 
