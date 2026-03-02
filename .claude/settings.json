@@ -68,25 +68,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/check-complete.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/session-end.sh"
-          },
-          {
-            "type": "prompt",
-            "prompt": "Review whether Claude completed all requested tasks. Check: 1) Were all user-requested changes implemented? 2) Were tests run and passing? 3) Was PROGRESS.md updated? If any of these are incomplete, respond with {\"ok\": false, \"reason\": \"Describe what's incomplete\"}. If everything looks done, respond with {\"ok\": true}."
-          }
-        ]
-      }
     ]
   }
 }

@@ -13,7 +13,7 @@ Synthesised from 8 community orchestration tools and enhanced with context engin
 | **CLAUDE.md** | Universal behavioural rules, model routing, anti-rationalization tables, coordination logic — Claude reads this on every session |
 | **7 review agents** | Parallel specialist reviewers: spec-compliance, security, TypeScript, architecture, performance, data integrity, accessibility — all read-only |
 | **5 slash commands** | `/prd`, `/review`, `/compound`, `/task`, `/bugfix` for the full build → review → learn loop |
-| **5 automated hooks** | Session context injection, attention anchoring, completion gating, quality enforcement, idle task assignment |
+| **5 automated hooks** | Session context injection, attention anchoring, quality enforcement, idle task assignment, post-edit linting |
 | **Ralph loop** | Autonomous PRD-driven development — git-coordinated, quality-gated, runs unattended |
 | **Bi-directional sync** | One command pushes framework updates to all projects; another pulls improvements back |
 | **Session recovery** | Parses Claude Code's internal session files to recover context after `/clear` or compaction |
@@ -87,23 +87,22 @@ Builds a searchable knowledge base. Future `/review` and session-start hooks con
 
 ## Automated hooks
 
-The framework installs 5 hooks that run automatically — no user action required.
+The framework installs hooks that run automatically — no user action required.
 
 | Hook | Trigger | What it does |
 |------|---------|-------------|
-| `session-start.sh` | Session start, resume, clear, compact | Injects PROGRESS.md, failed-approaches headings, and task locks into Claude's context |
-| `pre-tool-use.sh` | Before every Write, Edit, or Bash call | Re-reads PROGRESS.md (top 30 lines) to prevent goal drift over long sessions |
-| `check-complete.sh` | When Claude tries to stop | Blocks stop if PROGRESS.md hasn't been updated (>2h stale) |
-| `task-completed.sh` | Agent Team task marked complete | Runs quality gate; checks PROGRESS.md freshness |
-| `teammate-idle.sh` | Agent Team member goes idle | Prompts check for unclaimed tasks before shutdown |
+| `session-start.sh` | SessionStart | Injects PROGRESS.md, failed-approaches headings, and task locks into Claude's context |
+| `pre-tool-use.sh` | PreToolUse (Write/Edit) | Re-reads PROGRESS.md (top 30 lines) to prevent goal drift over long sessions |
+| `post-tool-use.sh` | PostToolUse (Edit/Write) | Runs ESLint on changed file for instant feedback |
+| `task-completed.sh` | TaskCompleted | Runs quality gate; checks PROGRESS.md freshness |
+| `teammate-idle.sh` | TeammateIdle | Prompts check for unclaimed tasks before shutdown |
 
 ### Context engineering principles
 
-These hooks implement three key techniques:
+These hooks implement two key techniques:
 
 - **Attention injection** — `pre-tool-use.sh` re-reads the current goal before every file modification, keeping it in Claude's recent attention window. Prevents goal drift after 50+ tool calls.
 - **Automatic bootstrapping** — `session-start.sh` ensures every session starts with awareness of project state, past failures, and active locks. No manual "read PROGRESS.md" needed.
-- **Completion gating** — `check-complete.sh` ensures Claude updates PROGRESS.md before stopping, so the next session can pick up where this one left off.
 
 ---
 
@@ -247,7 +246,7 @@ your-project/
 │   ├── hooks/
 │   │   ├── session-start.sh           ← Context injection at session start
 │   │   ├── pre-tool-use.sh            ← Attention anchoring before file modifications
-│   │   ├── check-complete.sh          ← Completion gate before stopping
+│   │   ├── post-tool-use.sh           ← ESLint on changed files
 │   │   ├── task-completed.sh          ← Quality gate on task completion
 │   │   └── teammate-idle.sh           ← Follow-up task assignment
 │   └── settings.json                  ← Hook configuration (merged, not overwritten)
@@ -315,7 +314,7 @@ Distilled from 8 community orchestration tools:
 ### Context engineering enhancements
 
 - [obra/superpowers](https://github.com/obra/superpowers) — SessionStart hook injection, anti-rationalization tables, spec-compliance review, verification-before-completion
-- [OthmanAdi/planning-with-files](https://github.com/OthmanAdi/planning-with-files) — PreToolUse attention injection, Stop completion gate, session JSONL recovery
+- [OthmanAdi/planning-with-files](https://github.com/OthmanAdi/planning-with-files) — PreToolUse attention injection, session JSONL recovery
 - [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) — tool restrictions per agent role
 
 ---

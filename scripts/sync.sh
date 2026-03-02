@@ -285,6 +285,11 @@ for (const [key, val] of Object.entries(framework.env || {})) {
 }
 
 if (!existing.hooks) existing.hooks = {};
+
+// Remove Stop hooks — they cause infinite loops (Stop fires after every turn,
+// hook output becomes a message, Claude responds, turn ends, Stop fires again)
+delete existing.hooks.Stop;
+
 for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   if (!existing.hooks[hookName]) {
     existing.hooks[hookName] = hookEntries;
