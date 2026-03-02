@@ -250,6 +250,13 @@ const fs = require('fs');
 const existing = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 const framework = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 
+// Normalize old-format object matchers to strings
+function normalizeMatcher(entry) {
+  if (entry.matcher && typeof entry.matcher === 'object') {
+    entry.matcher = entry.matcher.tool_name || '';
+  }
+}
+
 if (!existing.env) existing.env = {};
 for (const [key, val] of Object.entries(framework.env || {})) {
   existing.env[key] = val;
@@ -260,6 +267,8 @@ for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   if (!existing.hooks[hookName]) {
     existing.hooks[hookName] = hookEntries;
   } else {
+    // Fix old-format matchers on existing entries
+    existing.hooks[hookName].forEach(normalizeMatcher);
     const existingCmds = new Set();
     for (const entry of existing.hooks[hookName]) {
       if (entry.command) existingCmds.add(entry.command);
@@ -275,7 +284,7 @@ for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   }
 }
 
-fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2));
+fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2) + '\\n');
 " "$ps_path" "$fs_path"
           info "$name — merged framework hooks into settings.json"
         fi

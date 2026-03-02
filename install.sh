@@ -133,8 +133,8 @@ if [[ -f "$SETTINGS_DEST" ]]; then
   # Merge framework hooks into existing settings (appends, doesn't overwrite)
   if command -v node > /dev/null 2>&1; then
     # Convert MSYS paths to Windows paths for node
-    local sd_path="$SETTINGS_DEST"
-    local ss_path="$SETTINGS_SRC"
+    sd_path="$SETTINGS_DEST"
+    ss_path="$SETTINGS_SRC"
     if command -v cygpath > /dev/null 2>&1; then
       sd_path="$(cygpath -w "$SETTINGS_DEST")"
       ss_path="$(cygpath -w "$SETTINGS_SRC")"
@@ -143,6 +143,13 @@ if [[ -f "$SETTINGS_DEST" ]]; then
 const fs = require('fs');
 const existing = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 const framework = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+
+// Normalize old-format object matchers to strings
+function normalizeMatcher(entry) {
+  if (entry.matcher && typeof entry.matcher === 'object') {
+    entry.matcher = entry.matcher.tool_name || '';
+  }
+}
 
 if (!existing.env) existing.env = {};
 for (const [key, val] of Object.entries(framework.env || {})) {
@@ -154,6 +161,8 @@ for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   if (!existing.hooks[hookName]) {
     existing.hooks[hookName] = hookEntries;
   } else {
+    // Fix old-format matchers on existing entries
+    existing.hooks[hookName].forEach(normalizeMatcher);
     const existingCmds = new Set();
     for (const entry of existing.hooks[hookName]) {
       if (entry.command) existingCmds.add(entry.command);
@@ -169,7 +178,7 @@ for (const [hookName, hookEntries] of Object.entries(framework.hooks || {})) {
   }
 }
 
-fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2));
+fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2) + '\\n');
 " "$sd_path" "$ss_path"
     info "Merged settings into existing settings.json"
   else
