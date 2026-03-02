@@ -5,3 +5,4 @@ current_tasks/*.txt
 *.log
 .DS_Store
 node_modules/
+.claude/settings.json.bak

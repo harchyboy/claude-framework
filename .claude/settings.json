@@ -16,11 +16,33 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
             "command": "bash .claude/hooks/pre-tool-use.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-tool-use.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-compact.sh"
           }
         ]
       }
@@ -32,6 +54,10 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/check-complete.sh"
+          },
+          {
+            "type": "prompt",
+            "prompt": "Review whether Claude completed all requested tasks. Check: 1) Were all user-requested changes implemented? 2) Were tests run and passing? 3) Was PROGRESS.md updated? If any of these are incomplete, respond with {\"ok\": false, \"reason\": \"Describe what's incomplete\"}. If everything looks done, respond with {\"ok\": true}."
           }
         ]
       }

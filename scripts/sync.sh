@@ -232,6 +232,14 @@ cmd_push() {
       if [[ -f "$FRAMEWORK_DIR/docs/CODE-STANDARDS.md" ]]; then
         cp "$FRAMEWORK_DIR/docs/CODE-STANDARDS.md" "$project_dir/docs/CODE-STANDARDS.md"
       fi
+      # Copy .claude/docs/ (imported CLAUDE.md modules)
+      if [[ -d "$FRAMEWORK_DIR/.claude/docs" ]]; then
+        mkdir -p "$project_dir/.claude/docs"
+        for doc in "$FRAMEWORK_DIR/.claude/docs/"*.md; do
+          [[ ! -f "$doc" ]] && continue
+          cp "$doc" "$project_dir/.claude/docs/$(basename "$doc")"
+        done
+      fi
 
       # Merge framework hooks into project settings.json
       local project_settings="$project_dir/.claude/settings.json"

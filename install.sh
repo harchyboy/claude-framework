@@ -64,6 +64,7 @@ dirs=(
   "$TARGET_DIR/.claude/commands"
   "$TARGET_DIR/.claude/hooks"
   "$TARGET_DIR/.claude/skills"
+  "$TARGET_DIR/.claude/docs"
   "$TARGET_DIR/scripts/ralph-moss/prds"
   "$TARGET_DIR/docs/solutions"
   "$TARGET_DIR/docs/architecture"
@@ -121,6 +122,21 @@ for hook in "$FRAMEWORK_DIR/.claude/hooks/"*.sh; do
   info "Installed hook: $name"
 done
 ok "Hooks installed"
+
+# ─── Copy CLAUDE.md imported modules ────────────────────────────────────────
+
+h1 "Installing CLAUDE.md modules..."
+
+if [[ -d "$FRAMEWORK_DIR/.claude/docs" ]]; then
+  for doc in "$FRAMEWORK_DIR/.claude/docs/"*.md; do
+    [[ ! -f "$doc" ]] && continue
+    name=$(basename "$doc")
+    dest="$TARGET_DIR/.claude/docs/$name"
+    cp "$doc" "$dest"
+    info "Installed module: $name"
+  done
+fi
+ok "CLAUDE.md modules installed"
 
 # ─── Copy/merge settings.json ────────────────────────────────────────────────
 

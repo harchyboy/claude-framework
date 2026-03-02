@@ -10,6 +10,7 @@
 #   --quality-gate      Run typecheck/lint/tests after each iteration
 #   --review            Spawn review agent after implementation
 #   --strict            Fail on lint warnings
+#   --model <id>        Override Claude model (default: claude-sonnet-4-6)
 #   --skip-tests        Skip tests in quality gate
 #   --skip-preflight    Skip PRD validation
 #   --no-cost           Disable cost tracking
@@ -22,6 +23,7 @@ set -euo pipefail
 MAX_ITERATIONS=20
 USE_MAX_PLAN=false
 MAX_COST=""
+MODEL_OVERRIDE=""
 QUALITY_GATE=false
 REVIEW=false
 STRICT=false
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --max-plan)      USE_MAX_PLAN=true ;;
     --max-cost)      MAX_COST="$2"; shift ;;
+    --model)         MODEL_OVERRIDE="$2"; shift ;;
     --quality-gate)  QUALITY_GATE=true ;;
     --review)        REVIEW=true ;;
     --strict)        STRICT=true ;;
@@ -257,9 +260,10 @@ print(len(pending))
   build_iteration_prompt > /tmp/ralph_prompt_$$.md
 
   # Determine model
-  MODEL="claude-sonnet-4-5"
-  if [[ "$USE_MAX_PLAN" == "true" ]]; then
-    MODEL="claude-sonnet-4-5"
+  if [[ -n "$MODEL_OVERRIDE" ]]; then
+    MODEL="$MODEL_OVERRIDE"
+  else
+    MODEL="claude-sonnet-4-6"
   fi
 
   # Run Claude
