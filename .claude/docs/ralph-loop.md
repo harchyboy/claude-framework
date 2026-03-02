@@ -9,12 +9,14 @@ Options:
   --max-plan          Track iterations not cost (Anthropic Max plan users)
   --max-cost <n>      Hard stop if total cost exceeds $n
   --model <model-id>  Override the Claude model (default: claude-sonnet-4-6)
+  --timeout <min>     Per-iteration timeout in minutes (default: 30)
   --quality-gate      Run typecheck/lint/tests after each iteration
   --review            Spawn review agent after implementation
   --strict            Fail on lint warnings
 ```
 
 ## Each iteration
+0. Clean stale task locks (>2 hours old) — prevents crashed agents from blocking stories
 1. `git pull origin main` — sync with remote
 2. Read `PROGRESS.md` and `docs/solutions/` — bootstrap context
 3. Check `current_tasks/` — skip locked tasks

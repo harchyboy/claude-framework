@@ -14,6 +14,7 @@
 #   --skip-tests        Skip tests in quality gate
 #   --skip-preflight    Skip PRD validation
 #   --no-cost           Disable cost tracking
+#   --timeout <min>     Per-iteration timeout in minutes (default: 30)
 #   --help              Show this help
 
 set -euo pipefail
@@ -31,7 +32,9 @@ SKIP_TESTS=false
 SKIP_PREFLIGHT=false
 TRACK_COST=true
 TOTAL_COST=0
+ITER_TIMEOUT=30
 START_TIME=$(date +%s)
+STALE_LOCK_HOURS=2
 
 # Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -51,14 +54,62 @@ while [[ $# -gt 0 ]]; do
     --skip-tests)    SKIP_TESTS=true ;;
     --skip-preflight) SKIP_PREFLIGHT=true ;;
     --no-cost)       TRACK_COST=false ;;
+    --timeout)       ITER_TIMEOUT="$2"; shift ;;
     --help)
-      sed -n '2,20p' "$0"
+      sed -n '2,21p' "$0"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
   shift
 done
+
+# ─── Helper: count pending stories (uses node, not python3) ─────────────────
+
+count_pending() {
+  local prd_file="$1"
+  node -e "
+    const prd = JSON.parse(require('fs').readFileSync('$prd_file', 'utf8'));
+    const pending = prd.userStories.filter(s => !s.passes);
+    console.log(pending.length);
+  " 2>/dev/null || echo "0"
+}
+
+# ─── Helper: clean stale locks ──────────────────────────────────────────────
+
+clean_stale_locks() {
+  if [[ ! -d "current_tasks" ]]; then return; fi
+
+  local now
+  now=$(date +%s)
+  local threshold=$((STALE_LOCK_HOURS * 3600))
+  local cleaned=0
+
+  for lock_file in current_tasks/*.txt; do
+    [[ ! -f "$lock_file" ]] && continue
+
+    local file_age
+    file_age=$(node -e "
+      const fs = require('fs');
+      const stat = fs.statSync('$lock_file');
+      console.log(Math.floor((Date.now() - stat.mtimeMs) / 1000));
+    " 2>/dev/null || echo "0")
+
+    if [[ "$file_age" -gt "$threshold" ]]; then
+      local task_name
+      task_name=$(basename "$lock_file" .txt)
+      echo "  🧹 Removing stale lock: $task_name (${STALE_LOCK_HOURS}h+ old)"
+      rm -f "$lock_file"
+      cleaned=$((cleaned + 1))
+    fi
+  done
+
+  if [[ "$cleaned" -gt 0 ]]; then
+    git add current_tasks/ 2>/dev/null || true
+    git commit -m "chore: remove $cleaned stale task lock(s)" 2>/dev/null || true
+    git push 2>/dev/null || true
+  fi
+}
 
 # ─── Find PRD ────────────────────────────────────────────────────────────────
 
@@ -68,13 +119,7 @@ AGENT_PROMPT=""
 # Look for PRDs with incomplete stories
 for dir in scripts/ralph-moss/prds/*/; do
   if [[ -f "$dir/prd.json" ]]; then
-    incomplete=$(python3 -c "
-import json, sys
-with open('$dir/prd.json') as f:
-    prd = json.load(f)
-pending = [s for s in prd['userStories'] if not s.get('passes', False)]
-print(len(pending))
-" 2>/dev/null || echo "0")
+    incomplete=$(count_pending "$dir/prd.json")
     if [[ "$incomplete" -gt 0 ]]; then
       PRD_DIR="$dir"
       AGENT_PROMPT="$dir/AGENT_PROMPT.md"
@@ -97,24 +142,20 @@ if [[ "$SKIP_PREFLIGHT" != "true" ]]; then
   echo "🔍 Running preflight checks..."
 
   # Check PRD JSON is valid
-  python3 -c "
-import json, sys
-with open('${PRD_DIR}/prd.json') as f:
-    prd = json.load(f)
-
-required = ['project', 'branchName', 'description', 'userStories']
-for field in required:
-    if field not in prd:
-        print(f'ERROR: Missing required field: {field}')
-        sys.exit(1)
-
-for story in prd['userStories']:
-    if len(story.get('acceptanceCriteria', [])) < 2:
-        print(f'WARNING: Story {story[\"id\"]} has fewer than 2 acceptance criteria')
-
-pending = [s for s in prd['userStories'] if not s.get('passes', False)]
-print(f'✅ PRD valid: {len(pending)} stories pending')
-" || exit 1
+  node -e "
+    const prd = JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+    const required = ['project', 'branchName', 'description', 'userStories'];
+    for (const field of required) {
+      if (!(field in prd)) { console.log('ERROR: Missing required field: ' + field); process.exit(1); }
+    }
+    for (const story of prd.userStories) {
+      if ((story.acceptanceCriteria || []).length < 2) {
+        console.log('WARNING: Story ' + story.id + ' has fewer than 2 acceptance criteria');
+      }
+    }
+    const pending = prd.userStories.filter(s => !s.passes);
+    console.log('✅ PRD valid: ' + pending.length + ' stories pending');
+  " || exit 1
 
   # Check git is clean (warn only, never block)
   if ! git diff --quiet 2>/dev/null; then
@@ -122,7 +163,7 @@ print(f'✅ PRD valid: {len(pending)} stories pending')
   fi
 
   # Ensure branch exists
-  BRANCH_NAME=$(python3 -c "import json; print(json.load(open('${PRD_DIR}/prd.json'))['branchName'])")
+  BRANCH_NAME=$(node -e "const p=JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json','utf8'));console.log(p.branchName)")
   if ! git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
     git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME"
     echo "📌 Created/switched to branch: $BRANCH_NAME"
@@ -208,9 +249,12 @@ PROMPT
 
 # ─── Main loop ───────────────────────────────────────────────────────────────
 
+TIMEOUT_SECONDS=$((ITER_TIMEOUT * 60))
+
 echo ""
 echo "🚀 Starting Ralph loop"
 echo "   Max iterations: $MAX_ITERATIONS"
+echo "   Iteration timeout: ${ITER_TIMEOUT} minutes"
 echo "   Quality gate: $QUALITY_GATE"
 echo "   Review: $REVIEW"
 echo "   PRD: $PRD_DIR"
@@ -222,14 +266,11 @@ STORIES_COMPLETED=0
 while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ITERATION=$((ITERATION + 1))
 
+  # Clean stale locks before each iteration
+  clean_stale_locks
+
   # Check if all stories are done
-  remaining=$(python3 -c "
-import json
-with open('${PRD_DIR}/prd.json') as f:
-    prd = json.load(f)
-pending = [s for s in prd['userStories'] if not s.get('passes', False)]
-print(len(pending))
-" 2>/dev/null || echo "0")
+  remaining=$(count_pending "${PRD_DIR}/prd.json")
 
   if [[ "$remaining" -eq 0 ]]; then
     echo "🎉 All stories complete! PRD finished."
@@ -238,7 +279,7 @@ print(len(pending))
 
   # Cost check
   if [[ -n "$MAX_COST" ]] && [[ "$TRACK_COST" == "true" ]]; then
-    cost_check=$(python3 -c "print('OVER' if $TOTAL_COST > $MAX_COST else 'OK')")
+    cost_check=$(node -e "console.log($TOTAL_COST > $MAX_COST ? 'OVER' : 'OK')")
     if [[ "$cost_check" == "OVER" ]]; then
       echo "💰 Cost limit reached: \$$TOTAL_COST / \$$MAX_COST"
       break
@@ -247,7 +288,7 @@ print(len(pending))
 
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "▶ Iteration $ITERATION / $MAX_ITERATIONS — $remaining stories remaining"
-  echo "  $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "  $(date '+%Y-%m-%d %H:%M:%S') (timeout: ${ITER_TIMEOUT}min)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # Sync with remote
@@ -266,7 +307,7 @@ print(len(pending))
     MODEL="claude-sonnet-4-6"
   fi
 
-  # Run Claude
+  # Run Claude with timeout
   echo "  🤖 Running Claude ($MODEL)..."
 
   CLAUDE_ARGS=(
@@ -275,10 +316,43 @@ print(len(pending))
     --model "$MODEL"
   )
 
-  if ! claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$LOG_FILE"; then
-    echo "  ⚠️  Claude exited with error — check $LOG_FILE"
-    sleep 10
-    continue
+  ITER_START=$(date +%s)
+  TIMED_OUT=false
+
+  if command -v timeout > /dev/null 2>&1; then
+    # GNU timeout available (Linux, MSYS)
+    if ! timeout "${TIMEOUT_SECONDS}s" claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$LOG_FILE"; then
+      ITER_END=$(date +%s)
+      ITER_ELAPSED=$(( ITER_END - ITER_START ))
+      if [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
+        echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes"
+        TIMED_OUT=true
+      else
+        echo "  ⚠️  Claude exited with error — check $LOG_FILE"
+      fi
+      sleep 5
+      if [[ "$TIMED_OUT" != "true" ]]; then
+        continue
+      fi
+    fi
+  else
+    # No timeout command — run with background watchdog
+    claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$LOG_FILE" &
+    CLAUDE_PID=$!
+
+    # Watchdog: kill if exceeds timeout
+    (
+      sleep "$TIMEOUT_SECONDS"
+      if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+        kill "$CLAUDE_PID" 2>/dev/null || true
+        echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes" >> "$LOG_FILE"
+      fi
+    ) &
+    WATCHDOG_PID=$!
+
+    wait "$CLAUDE_PID" 2>/dev/null || true
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
   fi
 
   rm -f /tmp/ralph_prompt_$$.md
@@ -286,7 +360,7 @@ print(len(pending))
   # Extract cost if available
   if [[ "$TRACK_COST" == "true" ]] && [[ "$USE_MAX_PLAN" != "true" ]]; then
     ITER_COST=$(grep -oP 'cost: \$\K[0-9.]+' "$LOG_FILE" 2>/dev/null | tail -1 || echo "0")
-    TOTAL_COST=$(python3 -c "print(round($TOTAL_COST + ${ITER_COST:-0}, 4))")
+    TOTAL_COST=$(node -e "console.log(Math.round(($TOTAL_COST + ${ITER_COST:-0}) * 10000) / 10000)")
     echo "  💰 Iteration cost: \$${ITER_COST:-0} | Total: \$$TOTAL_COST"
   fi
 
@@ -306,13 +380,7 @@ print(len(pending))
   fi
 
   # Count new stories completed
-  new_remaining=$(python3 -c "
-import json
-with open('${PRD_DIR}/prd.json') as f:
-    prd = json.load(f)
-pending = [s for s in prd['userStories'] if not s.get('passes', False)]
-print(len(pending))
-" 2>/dev/null || echo "$remaining")
+  new_remaining=$(count_pending "${PRD_DIR}/prd.json")
 
   if [[ "$new_remaining" -lt "$remaining" ]]; then
     completed=$((remaining - new_remaining))
@@ -340,18 +408,16 @@ fi
 echo ""
 
 # Final PRD status
-python3 -c "
-import json
-with open('${PRD_DIR}/prd.json') as f:
-    prd = json.load(f)
-total = len(prd['userStories'])
-done = sum(1 for s in prd['userStories'] if s.get('passes', False))
-pending = [s for s in prd['userStories'] if not s.get('passes', False)]
-print(f'Stories: {done}/{total} complete')
-if pending:
-    print('Remaining:')
-    for s in pending:
-        print(f'  - {s[\"id\"]}: {s[\"title\"]}')
+node -e "
+  const prd = JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+  const total = prd.userStories.length;
+  const done = prd.userStories.filter(s => s.passes).length;
+  const pending = prd.userStories.filter(s => !s.passes);
+  console.log('Stories: ' + done + '/' + total + ' complete');
+  if (pending.length > 0) {
+    console.log('Remaining:');
+    pending.forEach(s => console.log('  - ' + s.id + ': ' + s.title));
+  }
 "
 echo ""
 echo "Next steps:"

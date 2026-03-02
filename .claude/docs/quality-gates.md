@@ -2,9 +2,9 @@
 
 ## Pre-commit (run before every commit)
 ```bash
-bash scripts/quality-gate.sh
+bash scripts/quality-gate.sh [--strict] [--coverage] [--fix] [--skip-tests]
 ```
-Checks: TypeScript compile → ESLint → Tests → No secrets in diff
+Checks: Secret detection (all staged changes) → TypeScript compile → ESLint → Tests → Coverage thresholds (with `--coverage`)
 
 ## Code review — two-phase process
 

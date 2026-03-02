@@ -8,12 +8,14 @@
 #   --strict        Fail on lint warnings (not just errors)
 #   --skip-tests    Skip test execution
 #   --fix           Auto-fix lint issues where possible
+#   --coverage      Run tests with coverage and check thresholds
 
 set -euo pipefail
 
 STRICT=false
 SKIP_TESTS=false
 AUTO_FIX=false
+CHECK_COVERAGE=false
 FAILED=false
 
 # Parse args
@@ -22,6 +24,7 @@ while [[ $# -gt 0 ]]; do
     --strict)     STRICT=true ;;
     --skip-tests) SKIP_TESTS=true ;;
     --fix)        AUTO_FIX=true ;;
+    --coverage)   CHECK_COVERAGE=true ;;
     *) echo "Unknown option: $1" ;;
   esac
   shift
@@ -54,14 +57,20 @@ SECRETS_FOUND=false
 PATTERNS=(
   "SUPABASE_SERVICE_ROLE_KEY"
   "sk-[a-zA-Z0-9]{32}"
+  "AKIA[0-9A-Z]{16}"
+  "ghp_[a-zA-Z0-9]{36}"
+  "gho_[a-zA-Z0-9]{36}"
+  "xoxb-[0-9]{10,}"
+  "hooks\.slack\.com/services/"
   "password\s*=\s*['\"][^'\"]{8,}"
   "api_key\s*=\s*['\"][^'\"]{10,}"
   "bearer\s+[a-zA-Z0-9]{20,}"
   "-----BEGIN.*PRIVATE KEY-----"
 )
 
+# Check ALL staged changes (not just new files) for added lines only
 for pattern in "${PATTERNS[@]}"; do
-  if git diff --cached --diff-filter=A -U0 2>/dev/null | grep -iE "$pattern" | grep -v "NEXT_PUBLIC_" | grep -q .; then
+  if git diff --cached -U0 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+' | grep -iE "$pattern" | grep -v "NEXT_PUBLIC_" | grep -v "example" | grep -v "placeholder" | grep -q .; then
     fail "Potential secret found matching pattern: $pattern"
     SECRETS_FOUND=true
   fi
@@ -126,6 +135,61 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     fi
   else
     warn "No test runner detected (vitest or jest config not found)"
+  fi
+fi
+
+# ─── Coverage check ──────────────────────────────────────────────────────────
+
+if [[ "$CHECK_COVERAGE" == "true" ]] && [[ "$SKIP_TESTS" != "true" ]]; then
+  info "Coverage threshold check..."
+
+  COVERAGE_OUTPUT=""
+
+  if [[ -f "vitest.config.ts" ]] || [[ -f "vitest.config.js" ]]; then
+    COVERAGE_OUTPUT=$(npx vitest run --coverage --reporter=json 2>/dev/null || true)
+  elif [[ -f "jest.config.ts" ]] || [[ -f "jest.config.js" ]]; then
+    COVERAGE_OUTPUT=$(npx jest --coverage --coverageReporters=json-summary --passWithNoTests 2>/dev/null || true)
+  fi
+
+  # Parse coverage from json-summary if it exists
+  COVERAGE_FILE=""
+  if [[ -f "coverage/coverage-summary.json" ]]; then
+    COVERAGE_FILE="coverage/coverage-summary.json"
+  elif [[ -f "coverage/coverage-final.json" ]]; then
+    COVERAGE_FILE="coverage/coverage-final.json"
+  fi
+
+  if [[ -n "$COVERAGE_FILE" ]] && command -v node > /dev/null 2>&1; then
+    COVERAGE_RESULT=$(node -e "
+      const cov = require('./' + process.argv[1]);
+      const total = cov.total || {};
+      const lines = total.lines ? total.lines.pct : 0;
+      const branches = total.branches ? total.branches.pct : 0;
+      const functions = total.functions ? total.functions.pct : 0;
+      const stmts = total.statements ? total.statements.pct : 0;
+      console.log(JSON.stringify({ lines, branches, functions, stmts }));
+    " "$COVERAGE_FILE" 2>/dev/null || echo '{}')
+
+    if [[ "$COVERAGE_RESULT" != "{}" ]]; then
+      LINES_PCT=$(echo "$COVERAGE_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.lines||0)")
+      STMTS_PCT=$(echo "$COVERAGE_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.stmts||0)")
+
+      echo "  Lines:      ${LINES_PCT}%"
+      echo "  Statements: ${STMTS_PCT}%"
+
+      # Threshold: 60% minimum (configurable projects can override)
+      THRESHOLD=60
+      BELOW=$(node -e "console.log($LINES_PCT < $THRESHOLD || $STMTS_PCT < $THRESHOLD ? 'YES' : 'NO')")
+      if [[ "$BELOW" == "YES" ]]; then
+        fail "Coverage below ${THRESHOLD}% threshold — ERROR: coverage too low"
+      else
+        pass "Coverage meets ${THRESHOLD}% threshold"
+      fi
+    else
+      warn "Could not parse coverage report"
+    fi
+  else
+    warn "No coverage report generated (ensure coverage reporter is configured)"
   fi
 fi
 

@@ -15,7 +15,15 @@ fi
 
 # ─── Check if PROGRESS.md was updated this session ───────────────────────────
 
-LAST_MODIFIED=$(stat -c %Y "$PROJECT_DIR/PROGRESS.md" 2>/dev/null || stat -f %m "$PROJECT_DIR/PROGRESS.md" 2>/dev/null || echo "0")
+# Cross-platform file age: try GNU stat, macOS stat, then node as fallback
+get_file_mtime() {
+  stat -c %Y "$1" 2>/dev/null \
+    || stat -f %m "$1" 2>/dev/null \
+    || node -e "console.log(Math.floor(require('fs').statSync('$1').mtimeMs/1000))" 2>/dev/null \
+    || echo "0"
+}
+
+LAST_MODIFIED=$(get_file_mtime "$PROJECT_DIR/PROGRESS.md")
 NOW=$(date +%s)
 AGE=$(( NOW - LAST_MODIFIED ))
 
