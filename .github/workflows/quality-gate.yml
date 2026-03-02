@@ -1,0 +1,48 @@
+# quality-gate.yml — Hartz Claude Framework CI
+#
+# Runs the quality gate on pull requests and pushes to main.
+# Copy this to your project's .github/workflows/ directory.
+#
+# Checks: Secret detection → TypeScript → ESLint → Tests → Coverage (optional)
+
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for git diff in secret detection
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quality gate
+        run: bash scripts/quality-gate.sh --strict
+
+      - name: Run quality gate with coverage
+        if: github.event_name == 'pull_request'
+        run: bash scripts/quality-gate.sh --coverage --skip-tests
+        # Tests already ran above; this just checks coverage thresholds
+        continue-on-error: true  # Coverage is advisory on PRs

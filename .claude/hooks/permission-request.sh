@@ -33,6 +33,12 @@ if [[ "$TOOL" == "Bash" ]]; then
       exit 0 ;;
     npm\ run\ build*|npm\ run\ dev*)
       exit 0 ;;
+    pytest*|python\ -m\ pytest*|python3\ -m\ pytest*)
+      exit 0 ;;
+    mypy\ *|ruff\ check*|ruff\ format*|flake8\ *)
+      exit 0 ;;
+    uv\ run*|uv\ sync*|poetry\ install*|pip\ install\ -r*)
+      exit 0 ;;
     ls\ *|pwd|cat\ *|head\ *|tail\ *|wc\ *)
       exit 0 ;;
     bash\ scripts/quality-gate.sh*)

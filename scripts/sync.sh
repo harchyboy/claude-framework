@@ -241,6 +241,20 @@ cmd_push() {
         done
       fi
 
+      # Copy .github/workflows/ (CI templates)
+      if [[ -d "$FRAMEWORK_DIR/.github/workflows" ]]; then
+        mkdir -p "$project_dir/.github/workflows"
+        for wf in "$FRAMEWORK_DIR/.github/workflows/"*.yml; do
+          [[ ! -f "$wf" ]] && continue
+          local wf_name
+          wf_name=$(basename "$wf")
+          local wf_dest="$project_dir/.github/workflows/$wf_name"
+          if [[ ! -f "$wf_dest" ]]; then
+            cp "$wf" "$wf_dest"
+          fi
+        done
+      fi
+
       # Merge framework hooks into project settings.json
       local project_settings="$project_dir/.claude/settings.json"
       local framework_settings="$FRAMEWORK_DIR/.claude/settings.json"
@@ -303,7 +317,7 @@ fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2) + '\\n');
 
       # Stage and commit the submodule pointer + updated files
       cd "$project_dir"
-      git add .claude-framework .claude/ scripts/ docs/CODE-STANDARDS.md 2>/dev/null || true
+      git add .claude-framework .claude/ scripts/ docs/CODE-STANDARDS.md .github/ 2>/dev/null || true
       if ! git diff --cached --quiet 2>/dev/null; then
         git commit -m "chore: update claude framework to $framework_commit" 2>/dev/null
         ok "$name — committed submodule update"

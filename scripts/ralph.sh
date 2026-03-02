@@ -15,6 +15,7 @@
 #   --skip-preflight    Skip PRD validation
 #   --no-cost           Disable cost tracking
 #   --timeout <min>     Per-iteration timeout in minutes (default: 30)
+#   --telemetry         Write structured JSON logs to agent_logs/ralph-telemetry.jsonl
 #   --help              Show this help
 
 set -euo pipefail
@@ -33,8 +34,10 @@ SKIP_PREFLIGHT=false
 TRACK_COST=true
 TOTAL_COST=0
 ITER_TIMEOUT=30
+TELEMETRY=false
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
+TELEMETRY_FILE="agent_logs/ralph-telemetry.jsonl"
 
 # Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -55,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --skip-preflight) SKIP_PREFLIGHT=true ;;
     --no-cost)       TRACK_COST=false ;;
     --timeout)       ITER_TIMEOUT="$2"; shift ;;
+    --telemetry)     TELEMETRY=true ;;
     --help)
       sed -n '2,21p' "$0"
       exit 0
@@ -73,6 +77,38 @@ count_pending() {
     const pending = prd.userStories.filter(s => !s.passes);
     console.log(pending.length);
   " 2>/dev/null || echo "0"
+}
+
+# ─── Helper: emit telemetry event ────────────────────────────────────────────
+
+emit_telemetry() {
+  if [[ "$TELEMETRY" != "true" ]]; then return; fi
+
+  local event_type="$1"
+  shift
+
+  # Remaining args are key=value pairs
+  local fields=""
+  for kv in "$@"; do
+    local key="${kv%%=*}"
+    local val="${kv#*=}"
+    # Escape quotes in values
+    val="${val//\"/\\\"}"
+    if [[ -n "$fields" ]]; then fields="$fields, "; fi
+    # Auto-detect numbers vs strings
+    if [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      fields="$fields\"$key\": $val"
+    elif [[ "$val" == "true" || "$val" == "false" ]]; then
+      fields="$fields\"$key\": $val"
+    else
+      fields="$fields\"$key\": \"$val\""
+    fi
+  done
+
+  local timestamp
+  timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+  echo "{\"timestamp\": \"$timestamp\", \"event\": \"$event_type\", $fields}" >> "$TELEMETRY_FILE"
 }
 
 # ─── Helper: clean stale locks ──────────────────────────────────────────────
@@ -257,8 +293,16 @@ echo "   Max iterations: $MAX_ITERATIONS"
 echo "   Iteration timeout: ${ITER_TIMEOUT} minutes"
 echo "   Quality gate: $QUALITY_GATE"
 echo "   Review: $REVIEW"
+echo "   Telemetry: $TELEMETRY"
 echo "   PRD: $PRD_DIR"
 echo ""
+
+emit_telemetry "session_start" \
+  "prd=$PRD_DIR" \
+  "max_iterations=$MAX_ITERATIONS" \
+  "timeout_min=$ITER_TIMEOUT" \
+  "quality_gate=$QUALITY_GATE" \
+  "model=${MODEL_OVERRIDE:-claude-sonnet-4-6}"
 
 ITERATION=0
 STORIES_COMPLETED=0
@@ -290,6 +334,11 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   echo "▶ Iteration $ITERATION / $MAX_ITERATIONS — $remaining stories remaining"
   echo "  $(date '+%Y-%m-%d %H:%M:%S') (timeout: ${ITER_TIMEOUT}min)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  emit_telemetry "iteration_start" \
+    "iteration=$ITERATION" \
+    "stories_remaining=$remaining" \
+    "total_cost=$TOTAL_COST"
 
   # Sync with remote
   git pull origin "$(git branch --show-current)" --rebase 2>/dev/null || true
@@ -364,7 +413,19 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     echo "  💰 Iteration cost: \$${ITER_COST:-0} | Total: \$$TOTAL_COST"
   fi
 
+  # Compute iteration wall time
+  ITER_END_TIME=$(date +%s)
+  ITER_WALL_SECS=$(( ITER_END_TIME - ITER_START ))
+
+  emit_telemetry "claude_completed" \
+    "iteration=$ITERATION" \
+    "wall_time_secs=$ITER_WALL_SECS" \
+    "timed_out=$TIMED_OUT" \
+    "model=$MODEL" \
+    "cost=${ITER_COST:-0}"
+
   # Quality gate
+  GATE_RESULT="skipped"
   if [[ "$QUALITY_GATE" == "true" ]]; then
     echo "  🔍 Running quality gate..."
     GATE_ARGS=""
@@ -373,19 +434,34 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
     if ! bash scripts/quality-gate.sh $GATE_ARGS; then
       echo "  ❌ Quality gate failed — Claude should fix this in the next iteration"
+      GATE_RESULT="failed"
     else
       echo "  ✅ Quality gate passed"
       STORIES_COMPLETED=$((STORIES_COMPLETED + 1))
+      GATE_RESULT="passed"
     fi
   fi
 
   # Count new stories completed
   new_remaining=$(count_pending "${PRD_DIR}/prd.json")
 
+  STORIES_THIS_ITER=0
   if [[ "$new_remaining" -lt "$remaining" ]]; then
-    completed=$((remaining - new_remaining))
-    echo "  ✅ $completed story completed ($new_remaining remaining)"
+    STORIES_THIS_ITER=$((remaining - new_remaining))
+    echo "  ✅ $STORIES_THIS_ITER story completed ($new_remaining remaining)"
   fi
+
+  # Count files changed in this iteration
+  FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo "0")
+
+  emit_telemetry "iteration_end" \
+    "iteration=$ITERATION" \
+    "wall_time_secs=$ITER_WALL_SECS" \
+    "quality_gate=$GATE_RESULT" \
+    "stories_completed=$STORIES_THIS_ITER" \
+    "stories_remaining=$new_remaining" \
+    "files_changed=$FILES_CHANGED" \
+    "total_cost=$TOTAL_COST"
 
   echo ""
   sleep 5
@@ -395,6 +471,14 @@ done
 
 END_TIME=$(date +%s)
 ELAPSED=$(( (END_TIME - START_TIME) / 60 ))
+
+FINAL_REMAINING=$(count_pending "${PRD_DIR}/prd.json")
+emit_telemetry "session_end" \
+  "iterations=$ITERATION" \
+  "elapsed_min=$ELAPSED" \
+  "total_cost=$TOTAL_COST" \
+  "stories_remaining=$FINAL_REMAINING" \
+  "prd=$PRD_DIR"
 
 echo ""
 echo "═══════════════════════════════════════"

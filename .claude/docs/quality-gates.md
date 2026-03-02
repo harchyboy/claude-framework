@@ -60,6 +60,7 @@ The framework installs these hooks automatically. They run without user action.
 | `subagent-start.sh` | SubagentStart | Injects project state into every spawned subagent |
 | `pre-compact.sh` | PreCompact | Snapshots session state before context compaction |
 | `check-complete.sh` | Stop | Verifies PROGRESS.md was updated + semantic completion check |
+| `session-end.sh` | Stop | Warns about uncommitted changes, stale locks; outputs session summary |
 | `task-completed.sh` | TaskCompleted | Runs quality gate; checks PROGRESS.md freshness |
 | `teammate-idle.sh` | TeammateIdle | Checks for unclaimed tasks before allowing shutdown |
 

@@ -115,10 +115,62 @@ if [[ -f ".eslintrc.json" ]] || [[ -f ".eslintrc.js" ]] || [[ -f "eslint.config.
   fi
 fi
 
+# ─── Python: type checking (mypy) ────────────────────────────────────────────
+
+IS_PYTHON=false
+if [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "setup.cfg" ]] || [[ -f "requirements.txt" ]]; then
+  IS_PYTHON=true
+fi
+
+if [[ "$IS_PYTHON" == "true" ]]; then
+  if command -v mypy > /dev/null 2>&1; then
+    info "mypy type checking..."
+    if mypy . 2>&1; then
+      pass "mypy: no type errors"
+    else
+      if [[ "$STRICT" == "true" ]]; then
+        fail "mypy: type errors found — ERROR: type check failed"
+      else
+        warn "mypy: type errors found (not blocking in non-strict mode)"
+      fi
+    fi
+  fi
+fi
+
+# ─── Python: linting (ruff) ─────────────────────────────────────────────────
+
+if [[ "$IS_PYTHON" == "true" ]]; then
+  if command -v ruff > /dev/null 2>&1; then
+    info "ruff linting..."
+
+    RUFF_FLAGS="check"
+    if [[ "$AUTO_FIX" == "true" ]]; then
+      RUFF_FLAGS="check --fix"
+    fi
+
+    if ruff $RUFF_FLAGS . 2>&1; then
+      pass "ruff: no issues"
+    else
+      if [[ "$STRICT" == "true" ]]; then
+        fail "ruff: lint issues found (strict mode) — ERROR: lint failed"
+      else
+        warn "ruff: lint issues found (not blocking in non-strict mode)"
+      fi
+    fi
+  elif command -v flake8 > /dev/null 2>&1; then
+    info "flake8 linting..."
+    if flake8 . 2>&1; then
+      pass "flake8: no issues"
+    else
+      warn "flake8: lint issues found"
+    fi
+  fi
+fi
+
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
 if [[ "$SKIP_TESTS" != "true" ]]; then
-  # Detect test runner
+  # Detect test runner — Node.js
   if [[ -f "vitest.config.ts" ]] || [[ -f "vitest.config.js" ]]; then
     info "Vitest..."
     if npx vitest run 2>&1; then
@@ -133,8 +185,32 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     else
       fail "Jest: tests failing — ERROR: tests failed"
     fi
-  else
-    warn "No test runner detected (vitest or jest config not found)"
+  fi
+
+  # Detect test runner — Python
+  if [[ "$IS_PYTHON" == "true" ]]; then
+    if command -v pytest > /dev/null 2>&1; then
+      info "pytest..."
+      if pytest 2>&1; then
+        pass "pytest: all tests passing"
+      else
+        fail "pytest: tests failing — ERROR: tests failed"
+      fi
+    elif command -v python > /dev/null 2>&1 && python -m pytest --version > /dev/null 2>&1; then
+      info "pytest (via python -m)..."
+      if python -m pytest 2>&1; then
+        pass "pytest: all tests passing"
+      else
+        fail "pytest: tests failing — ERROR: tests failed"
+      fi
+    fi
+  fi
+
+  # Warn if no test runner found at all
+  if [[ ! -f "vitest.config.ts" ]] && [[ ! -f "vitest.config.js" ]] && \
+     [[ ! -f "jest.config.ts" ]] && [[ ! -f "jest.config.js" ]] && \
+     [[ "$IS_PYTHON" != "true" ]]; then
+    warn "No test runner detected (vitest, jest, or pytest config not found)"
   fi
 fi
 
