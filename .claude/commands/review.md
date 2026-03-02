@@ -38,11 +38,13 @@ then findings are synthesised into a single P1/P2/P3 report.
 - `security-sentinel` — any code that touches auth, data, or user input
 - `typescript-reviewer` — any TypeScript changes
 - `architecture-strategist` — any structural or module-level changes
+- `error-handling-reviewer` — any feature work (loading/error/empty states, fetch handling)
 
 **Spawn when relevant (Phase 2):**
 - `performance-oracle` — data-heavy features, list views, database queries
 - `data-integrity-guardian` — migrations, schema changes, RLS policies
 - `accessibility-reviewer` — UI component changes
+- `test-quality-reviewer` — when tests were added, modified, or should have been added
 
 ## Parallelism rule
 

@@ -11,7 +11,7 @@ Checks: TypeScript compile → ESLint → Tests → No secrets in diff
 **Phase 1: Spec compliance** (runs first, blocks Phase 2 on failure)
 - `spec-compliance-reviewer` — verifies implementation matches requirements/PRD/acceptance criteria
 
-**Phase 2: Quality review** (7 agents, run in parallel)
+**Phase 2: Quality review** (9 agents, run in parallel)
 
 ## Code review scoring (9 dimensions, threshold: 0.85)
 When evaluating completed work, score these dimensions 0.0–1.0.
@@ -56,6 +56,8 @@ The framework installs these hooks automatically. They run without user action.
 | `session-start.sh` | SessionStart | Injects PROGRESS.md, failed-approaches, task locks into context |
 | `pre-tool-use.sh` | PreToolUse (Write/Edit) | Re-reads PROGRESS.md top 30 lines to prevent goal drift |
 | `post-tool-use.sh` | PostToolUse (Edit/Write) | Runs ESLint on changed file for instant feedback |
+| `permission-request.sh` | PermissionRequest | Auto-approves safe commands, blocks dangerous ones |
+| `subagent-start.sh` | SubagentStart | Injects project state into every spawned subagent |
 | `pre-compact.sh` | PreCompact | Snapshots session state before context compaction |
 | `check-complete.sh` | Stop | Verifies PROGRESS.md was updated + semantic completion check |
 | `task-completed.sh` | TaskCompleted | Runs quality gate; checks PROGRESS.md freshness |

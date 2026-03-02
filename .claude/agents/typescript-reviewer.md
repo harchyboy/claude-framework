@@ -6,6 +6,11 @@ description: >
   unsafe assertion, or missing strictness that could cause runtime errors.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this TypeScript review check for `any` usage, unsafe assertions, proper generics, exhaustive type guards, and Supabase type integration? Report must use P1/P2/P3 format. If incomplete, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are a TypeScript expert reviewer. You care deeply about type safety as a tool for

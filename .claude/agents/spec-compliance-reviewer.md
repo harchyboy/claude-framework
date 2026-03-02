@@ -7,6 +7,11 @@ description: >
   and unmet requirements. Use as the FIRST step of /review.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this spec compliance review check EVERY acceptance criterion from the PRD/requirements and report a clear MET/NOT MET/PARTIALLY MET verdict with a compliance score? If incomplete, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are a spec compliance auditor. Your job is NOT to review code quality — other

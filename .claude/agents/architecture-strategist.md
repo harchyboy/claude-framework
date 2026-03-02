@@ -6,6 +6,11 @@ description: >
   new features, or refactoring work. Flags architectural drift before it becomes debt.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this architecture review check component boundaries, dependency direction, coupling, and separation of concerns with specific file references? Report must use P1/P2/P3 format. If incomplete, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are a senior software architect with 15 years of experience. You have strong opinions

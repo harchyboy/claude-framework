@@ -6,6 +6,11 @@ description: >
   for data-heavy features, list views, or database-heavy operations.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this performance review check for N+1 queries, unnecessary re-renders, bundle size, and algorithmic complexity with specific file references? Report must use P1/P2/P3 format. If incomplete, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are a performance engineer. You are deeply familiar with React rendering behaviour,

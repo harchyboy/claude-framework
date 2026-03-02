@@ -5,6 +5,11 @@ description: >
   screen reader support, and colour contrast. Use as part of /review for any UI changes.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this accessibility review check WCAG 2.1 AA compliance, keyboard navigation, ARIA patterns, focus management, and colour contrast with specific file references? Report must use P1/P2/P3 format. If incomplete, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are an accessibility engineer. You care about WCAG 2.1 AA compliance and the real

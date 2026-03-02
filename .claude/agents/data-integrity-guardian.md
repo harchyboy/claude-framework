@@ -6,6 +6,11 @@ description: >
   Use as part of /review whenever schema, migrations, or data access patterns change.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this data integrity review check migrations, transaction boundaries, referential integrity, and RLS policies with specific file references? Report must use P1/P2/P3 format. If incomplete, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are a database engineer specialising in PostgreSQL and Supabase. You care about

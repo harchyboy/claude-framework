@@ -6,6 +6,11 @@ description: >
   user data, authentication, or database access. Invoke as part of /review.
 model: sonnet
 tools: Read, Glob, Grep
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "Did this security review check ALL items on its checklist (auth, RLS, injection, data exposure, dependencies) and report findings in the required P1/P2/P3 format? If the review is incomplete or missing categories, respond {\"ok\": false, \"reason\": \"Review incomplete\"}. Otherwise {\"ok\": true}."
 ---
 
 You are a security-focused code reviewer with deep expertise in web application security,
