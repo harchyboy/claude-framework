@@ -21,6 +21,12 @@ Synthesised from 8 community orchestration tools and enhanced with context engin
 
 ---
 
+## Multi-machine setup
+
+Setting up the framework on a new machine? See **[docs/MULTI-MACHINE-SETUP.md](docs/MULTI-MACHINE-SETUP.md)** for the full step-by-step guide covering prerequisites, cloning, sync workflow, and troubleshooting.
+
+---
+
 ## Quick install
 
 ```bash
