@@ -150,13 +150,13 @@ create_worktree() {
 
   # Clean up if stale worktree exists
   if [[ -d "$worktree_path" ]]; then
-    echo "  🧹 Cleaning stale worktree: $story_id"
-    git worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
-    git branch -D "$branch_name" 2>/dev/null || true
+    echo "  🧹 Cleaning stale worktree: $story_id" >&2
+    git worktree remove "$worktree_path" --force >/dev/null 2>&1 || rm -rf "$worktree_path"
+    git branch -D "$branch_name" >/dev/null 2>&1 || true
   fi
 
   mkdir -p "$WORKTREE_DIR"
-  git worktree add "$worktree_path" -b "$branch_name" HEAD 2>/dev/null
+  git worktree add "$worktree_path" -b "$branch_name" HEAD >/dev/null 2>&1
   echo "$worktree_path"
 }
 
@@ -165,7 +165,7 @@ merge_worktree() {
   local branch_name="ralph/${story_id}"
   local worktree_path="${WORKTREE_DIR}/${story_id}"
   local main_branch
-  main_branch=$(git branch --show-current)
+  main_branch=$(git rev-parse --abbrev-ref HEAD)
 
   # Check if the worktree branch has any commits ahead
   if git log "${main_branch}..${branch_name}" --oneline 2>/dev/null | grep -q .; then
@@ -457,6 +457,9 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   run_claude() {
     local work_dir="${WORKTREE_PATH:-$(pwd)}"
 
+    # Prevent "nested session" detection when launched from within Claude Code
+    unset CLAUDECODE 2>/dev/null || true
+
     if [[ "$USE_DOCKER" == "true" ]]; then
       local DOCKER_COMPOSE_FILE=""
       for f in docker/docker-compose.yml .claude-framework/docker/docker-compose.yml; do
@@ -482,40 +485,39 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ITER_START=$(date +%s)
   TIMED_OUT=false
 
-  if command -v timeout > /dev/null 2>&1; then
-    # GNU timeout available (Linux, MSYS)
-    if ! timeout "${TIMEOUT_SECONDS}s" run_claude 2>&1 | tee "$LOG_FILE"; then
-      ITER_END=$(date +%s)
-      ITER_ELAPSED=$(( ITER_END - ITER_START ))
-      if [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
-        echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes"
-        TIMED_OUT=true
-      else
-        echo "  ⚠️  Claude exited with error — check $LOG_FILE"
-      fi
-      sleep 5
-      if [[ "$TIMED_OUT" != "true" ]]; then
-        continue
-      fi
+  # Run Claude with background watchdog for timeout
+  run_claude 2>&1 | tee "$LOG_FILE" &
+  CLAUDE_PID=$!
+
+  # Watchdog: kill if exceeds timeout
+  (
+    sleep "$TIMEOUT_SECONDS"
+    if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+      kill "$CLAUDE_PID" 2>/dev/null || true
+      echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes" >> "$LOG_FILE"
     fi
-  else
-    # No timeout command — run with background watchdog
-    run_claude 2>&1 | tee "$LOG_FILE" &
-    CLAUDE_PID=$!
+  ) &
+  WATCHDOG_PID=$!
 
-    # Watchdog: kill if exceeds timeout
-    (
-      sleep "$TIMEOUT_SECONDS"
-      if kill -0 "$CLAUDE_PID" 2>/dev/null; then
-        kill "$CLAUDE_PID" 2>/dev/null || true
-        echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes" >> "$LOG_FILE"
-      fi
-    ) &
-    WATCHDOG_PID=$!
+  wait "$CLAUDE_PID" 2>/dev/null
+  CLAUDE_EXIT=$?
+  kill "$WATCHDOG_PID" 2>/dev/null || true
+  wait "$WATCHDOG_PID" 2>/dev/null || true
 
-    wait "$CLAUDE_PID" 2>/dev/null || true
-    kill "$WATCHDOG_PID" 2>/dev/null || true
-    wait "$WATCHDOG_PID" 2>/dev/null || true
+  ITER_END=$(date +%s)
+  ITER_ELAPSED=$(( ITER_END - ITER_START ))
+
+  if [[ "$CLAUDE_EXIT" -ne 0 ]]; then
+    if [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
+      echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes"
+      TIMED_OUT=true
+    else
+      echo "  ⚠️  Claude exited with error — check $LOG_FILE"
+    fi
+    sleep 5
+    if [[ "$TIMED_OUT" != "true" ]]; then
+      continue
+    fi
   fi
 
   rm -f /tmp/ralph_prompt_$$.md
