@@ -15,6 +15,7 @@ set -euo pipefail
 WATCH=false
 INTERVAL=30
 JSON_OUTPUT=false
+TMUX_PREFIX="hartz"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +41,13 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+# ─── Platform detection ──────────────────────────────────────────────────────
+
+USE_TMUX=false
+if command -v tmux &>/dev/null; then
+  USE_TMUX=true
+fi
+
 # ─── Directories ─────────────────────────────────────────────────────────────
 
 HARTZ_DIR="$HOME/.hartz-claude-framework"
@@ -47,6 +55,36 @@ LOG_DIR="$HARTZ_DIR/logs"
 PID_DIR="$HARTZ_DIR/pids"
 REVIEW_DIR="$HARTZ_DIR/review-queue"
 REGISTRY="$HARTZ_DIR/projects.txt"
+
+# ─── Helper: check if project is running ─────────────────────────────────────
+
+is_project_running() {
+  local project_name="$1"
+
+  # Check tmux
+  if [[ "$USE_TMUX" == "true" ]]; then
+    local session_name="${TMUX_PREFIX}-${project_name}"
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+      echo "tmux:$session_name"
+      return 0
+    fi
+  fi
+
+  # Check PID
+  local pid_file="$PID_DIR/${project_name}.pid"
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid=$(cat "$pid_file")
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "pid:$pid"
+      return 0
+    else
+      rm -f "$pid_file"
+    fi
+  fi
+
+  return 1
+}
 
 display_status() {
   if [[ "$JSON_OUTPUT" != "true" ]]; then
@@ -64,7 +102,6 @@ display_status() {
   TOTAL_STORIES=0
   TOTAL_DONE=0
 
-  # JSON collector
   JSON_PROJECTS="["
 
   if [[ -f "$REGISTRY" ]]; then
@@ -74,20 +111,26 @@ display_status() {
       [[ ! -d "$project_path" ]] && continue
 
       PROJECT_NAME=$(basename "$project_path")
-      PID_FILE="$PID_DIR/${PROJECT_NAME}.pid"
 
       # Status
       STATUS="idle"
-      PID=""
-      if [[ -f "$PID_FILE" ]]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-          STATUS="running"
-          RUNNING_COUNT=$((RUNNING_COUNT + 1))
-        else
-          STATUS="completed"
-          COMPLETED_COUNT=$((COMPLETED_COUNT + 1))
-          rm -f "$PID_FILE"
+      RUN_INFO=""
+      if RUN_INFO=$(is_project_running "$PROJECT_NAME"); then
+        STATUS="running"
+        RUNNING_COUNT=$((RUNNING_COUNT + 1))
+      else
+        # Check if there's a recent log (completed within last hour)
+        LATEST_LOG=$(ls -t "$LOG_DIR/${PROJECT_NAME}"_*.log 2>/dev/null | head -1 || echo "")
+        if [[ -n "$LATEST_LOG" ]]; then
+          LOG_AGE=$(node -e "
+            const fs = require('fs');
+            const stat = fs.statSync('$LATEST_LOG');
+            console.log(Math.floor((Date.now() - stat.mtimeMs) / 1000));
+          " 2>/dev/null || echo "999999")
+          if [[ "$LOG_AGE" -lt 3600 ]]; then
+            STATUS="completed"
+            COMPLETED_COUNT=$((COMPLETED_COUNT + 1))
+          fi
         fi
       fi
 
@@ -110,19 +153,21 @@ display_status() {
         fi
       done
 
-      # Latest log file
+      # Latest log
       LATEST_LOG=$(ls -t "$LOG_DIR/${PROJECT_NAME}"_*.log 2>/dev/null | head -1 || echo "")
       LAST_ACTIVITY=""
+      LAST_LOG_LINE=""
       if [[ -n "$LATEST_LOG" ]]; then
         LAST_ACTIVITY=$(date -r "$LATEST_LOG" '+%H:%M:%S' 2>/dev/null || echo "")
+        LAST_LOG_LINE=$(grep -v '^$' "$LATEST_LOG" 2>/dev/null | tail -1 | head -c 80 || echo "")
       fi
 
-      # Review queue count
+      # Review queue
       REVIEW_COUNT=$(ls "$REVIEW_DIR/${PROJECT_NAME}"_*.json 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 
       if [[ "$JSON_OUTPUT" == "true" ]]; then
         [[ "$JSON_PROJECTS" != "[" ]] && JSON_PROJECTS="$JSON_PROJECTS,"
-        JSON_PROJECTS="$JSON_PROJECTS{\"name\":\"$PROJECT_NAME\",\"status\":\"$STATUS\",\"pid\":\"$PID\",\"prd\":\"$PRD_NAME\",\"stories_total\":$STORIES_TOTAL,\"stories_done\":$STORIES_DONE,\"reviews_pending\":$REVIEW_COUNT}"
+        JSON_PROJECTS="$JSON_PROJECTS{\"name\":\"$PROJECT_NAME\",\"status\":\"$STATUS\",\"run_info\":\"$RUN_INFO\",\"prd\":\"$PRD_NAME\",\"stories_total\":$STORIES_TOTAL,\"stories_done\":$STORIES_DONE,\"reviews_pending\":$REVIEW_COUNT}"
       else
         # Status icon
         case "$STATUS" in
@@ -148,11 +193,22 @@ display_status() {
         fi
 
         echo -e "  $STATUS_ICON ${BOLD}$PROJECT_NAME${NC}"
-        echo -e "    Status:   $STATUS $([ -n "$PID" ] && echo "(PID $PID)" || echo "")"
+        if [[ "$STATUS" == "running" ]]; then
+          if [[ "$RUN_INFO" == tmux:* ]]; then
+            local session="${RUN_INFO#tmux:}"
+            echo -e "    Session:  $session  ${DIM}(tmux attach -t $session)${NC}"
+          else
+            local pid="${RUN_INFO#pid:}"
+            echo -e "    Process:  PID $pid  ${DIM}(tail -f $LATEST_LOG)${NC}"
+          fi
+        else
+          echo -e "    Status:   $STATUS"
+        fi
         echo -e "    Progress: $PROGRESS"
         [[ -n "$PRD_NAME" ]] && echo -e "    PRD:      $PRD_NAME"
         [[ "$REVIEW_COUNT" -gt 0 ]] && echo -e "    Reviews:  ${YELLOW}$REVIEW_COUNT awaiting review${NC}"
         [[ -n "$LAST_ACTIVITY" ]] && echo -e "    Last log: $LAST_ACTIVITY"
+        [[ -n "$LAST_LOG_LINE" ]] && echo -e "    ${DIM}> $LAST_LOG_LINE${NC}"
         echo ""
       fi
     done < "$REGISTRY"
@@ -162,14 +218,21 @@ display_status() {
     JSON_PROJECTS="$JSON_PROJECTS]"
     echo "{\"timestamp\":\"$(date -u '+%Y-%m-%dT%H:%M:%SZ')\",\"running\":$RUNNING_COUNT,\"completed\":$COMPLETED_COUNT,\"total_stories\":$TOTAL_STORIES,\"total_done\":$TOTAL_DONE,\"projects\":$JSON_PROJECTS}"
   else
-    # Summary bar
     echo -e "  ${BOLD}─────────────────────────────────────────${NC}"
     echo -e "  Running: ${GREEN}$RUNNING_COUNT${NC}  Completed: ${CYAN}$COMPLETED_COUNT${NC}  Stories: $TOTAL_DONE/$TOTAL_STORIES"
 
-    # Review queue summary
     TOTAL_REVIEWS=$(ls "$REVIEW_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ' || echo "0")
     if [[ "$TOTAL_REVIEWS" -gt 0 ]]; then
       echo -e "  ${YELLOW}Review queue: $TOTAL_REVIEWS items awaiting human review${NC}"
+    fi
+    echo ""
+
+    echo -e "  ${DIM}Commands:${NC}"
+    echo -e "  ${DIM}  bash scripts/hartz-land/stop-all.sh     — Stop all agents${NC}"
+    if [[ "$USE_TMUX" == "true" ]]; then
+      echo -e "  ${DIM}  tmux attach -t ${TMUX_PREFIX}-<project>  — Watch agent work${NC}"
+    else
+      echo -e "  ${DIM}  tail -f $LOG_DIR/<project>_*.log        — Watch agent output${NC}"
     fi
     echo ""
   fi

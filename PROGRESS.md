@@ -14,34 +14,32 @@
 
 ## What was last worked on
 
-P2+P3 improvements: git worktrees, context management, local model routing.
+Track 3 — automation pipeline, tmux orchestration, shared memory.
 
-**P2 — Git worktrees**: Replaced file-based task locks (`current_tasks/`) with git worktrees (`.worktrees/<story-id>`). Each Ralph iteration creates an isolated worktree, runs Claude inside it, merges back on completion. No more stale lock files or file conflicts between agents.
+**Auto-PR pipeline**: Added `--auto-pr` and `--pr-threshold` flags to ralph.sh. After verification passes with confidence >= threshold (default 0.9), automatically creates a GitHub PR via `gh pr create` with story info, acceptance criteria, and proof packet summary. Includes branch push, duplicate PR detection, and telemetry.
 
-**P2 — Context management**: Added previous-iteration context injection to agent prompts. Agents now receive info about what the last iteration did. Added context management instructions to the prompt ("update PROGRESS.md if context is getting large").
+**tmux orchestration**: Rewrote start-all.sh to use tmux sessions instead of background processes. Each project gets `hartz-<name>` session. `tmux attach` to watch agents work in real-time. Updated stop-all.sh (sends Ctrl-C for graceful shutdown, falls back to kill-session) and monitor.sh (detects tmux sessions, shows last log line, displays attach commands).
 
-**P3 — Local model routing**: Created `scripts/local-model.sh` — routes prompts to Ollama (default: qwen2.5-coder:7b) with automatic Claude fallback. For test generation, docs, lint fixes. Updated model routing table in CLAUDE.md.
+**Shared Memory MCP**: Reconfigured Memory MCP to persist to `~/.hartz-claude-framework/shared-memory.json`. Knowledge graph now shared across all projects and sessions.
 
 ---
 
 ## What's next
 
-1. **Connect to Hartz Land** — Set up the remote machine, run `setup.sh`
-2. **Add GitHub PAT** — Configure GitHub MCP with personal access token
-3. **Install Ollama** — Set up local model for cost-optimized subtasks
-4. **Runtime verification** — Test Playwright MCP with a real project's dev server
-5. **Hartz Command integration** — Review queue UI, daily digest endpoint, confidence dashboard
-6. **Test worktree workflow** — Run Ralph loop end-to-end with worktree isolation
+1. **Install Docker Desktop + Ollama** — User is installing; verify once done
+2. **Runtime verification** — Test Playwright MCP with a real project's dev server
+3. **E2E test with auto-PR** — Run Ralph loop with `--verify --auto-pr` on a real project
+4. **Hartz Command integration** — Review queue UI, daily digest endpoint, confidence dashboard
+5. **Multi-machine sync** — Test Hartz Land setup on external drive / remote machine
 
 ---
 
 ## Known issues / blockers
 
-- GitHub MCP needs a Personal Access Token (placeholder installed)
 - Static verification caps confidence at 0.85 — runtime verification needed for higher scores
 - Hartz Land machine not yet connected
-- Claude Squad cannot automate session creation — tmux is the automation layer
-- Ollama not yet installed — local-model.sh falls back to Claude gracefully
+- Docker Desktop + Ollama pending user installation
+- tmux required on Hartz Land machine (start-all.sh dependency)
 
 ---
 
@@ -65,3 +63,4 @@ P2+P3 improvements: git worktrees, context management, local model routing.
 | — | Initial setup | — |
 | 2026-03-04 | Verification system, Hartz Land scripts, MCP setup, proof packets, review queue | N/A (framework enhancement) |
 | 2026-03-05 | P0: CLAUDE.md trim, P1: Docker isolation, P1: Session mgmt, P2: Worktrees, P2: Context mgmt, P3: Local models | N/A (framework enhancement) |
+| 2026-03-05 | MCPs installed (Playwright, Memory, Filesystem, GitHub w/ PAT), E2E test on hartzai-website (3 bugs fixed), Track 3: auto-PR, tmux orchestration, shared memory | N/A (framework enhancement) |

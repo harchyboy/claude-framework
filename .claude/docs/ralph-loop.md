@@ -14,6 +14,8 @@ Options:
   --review            Spawn review agent after implementation
   --verify            Run independent verification + generate proof packets
   --verify-runtime    Include Playwright browser verification
+  --auto-pr           Auto-create GitHub PR when confidence >= threshold
+  --pr-threshold <n>  Confidence threshold for auto-PR (default: 0.9)
   --strict            Fail on lint warnings
 ```
 
@@ -25,9 +27,10 @@ Options:
 4. Run Claude inside the worktree — isolated from other agents
 5. Implement with tests, run quality gate
 6. Run verification (if `--verify`) — generate proof packet, score confidence
-7. Merge worktree branch back to main branch
-8. Clean up worktree
-9. Push
+7. Auto-PR (if `--auto-pr` and confidence >= threshold) — push branch, `gh pr create`
+8. Merge worktree branch back to main branch
+9. Clean up worktree
+10. Push
 
 **Multi-agent isolation:** Each agent works in its own worktree — no file conflicts, no lock files.
 
@@ -63,7 +66,7 @@ proof/<story-id>/
 ```
 
 Confidence scoring:
-- **0.9+**: All criteria verified — auto-merge candidate
+- **0.9+**: All criteria verified — auto-PR created (with `--auto-pr`)
 - **0.7–0.89**: Mostly verified — queued for human review
 - **< 0.7**: Failures found — blocked until reviewed
 
@@ -74,8 +77,9 @@ Review queue: `bash scripts/hartz-land/review-queue.sh`
 Run Ralph across all projects on a dedicated machine:
 
 ```bash
-bash scripts/hartz-land/start-all.sh --verify --max-concurrent 3
+bash scripts/hartz-land/start-all.sh --verify --auto-pr --max-concurrent 3
 bash scripts/hartz-land/monitor.sh --watch
+tmux attach -t hartz-<project>              # watch an agent work live
 bash scripts/hartz-land/daily-digest.sh     # morning review
 bash scripts/hartz-land/review-queue.sh     # approve/reject
 ```
