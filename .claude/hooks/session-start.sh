@@ -6,6 +6,47 @@
 
 PROJECT_DIR="$(pwd)"
 
+# ─── Sync check (warn if behind remote) ──────────────────────────────────────
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # Quick fetch (timeout after 5 seconds to not block startup)
+  timeout 5 git fetch origin 2>/dev/null || true
+
+  LOCAL=$(git rev-parse HEAD 2>/dev/null)
+  BRANCH=$(git branch --show-current 2>/dev/null)
+  REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "")
+
+  if [[ -n "$REMOTE" ]] && [[ "$LOCAL" != "$REMOTE" ]]; then
+    BEHIND=$(git rev-list --count HEAD..origin/$BRANCH 2>/dev/null || echo "0")
+    AHEAD=$(git rev-list --count origin/$BRANCH..HEAD 2>/dev/null || echo "0")
+
+    if [[ "$BEHIND" -gt 0 ]]; then
+      echo "<framework-context source=\"sync-warning\">"
+      echo "## SYNC WARNING: This repo is $BEHIND commit(s) behind origin/$BRANCH"
+      echo "Run \`git pull\` before starting work to avoid conflicts."
+      if [[ "$AHEAD" -gt 0 ]]; then
+        echo "Also $AHEAD commit(s) ahead — pull with rebase: \`git pull --rebase\`"
+      fi
+      echo "</framework-context>"
+      echo ""
+    fi
+  fi
+
+  # Check framework submodule freshness
+  if [[ -d "$PROJECT_DIR/.claude-framework" ]]; then
+    SUBMOD_COMMIT=$(cd "$PROJECT_DIR/.claude-framework" && git rev-parse --short HEAD 2>/dev/null || echo "")
+    SUBMOD_REMOTE=$(cd "$PROJECT_DIR/.claude-framework" && git fetch origin 2>/dev/null && git rev-parse --short origin/master 2>/dev/null || echo "")
+    if [[ -n "$SUBMOD_COMMIT" ]] && [[ -n "$SUBMOD_REMOTE" ]] && [[ "$SUBMOD_COMMIT" != "$SUBMOD_REMOTE" ]]; then
+      echo "<framework-context source=\"framework-update\">"
+      echo "## FRAMEWORK UPDATE AVAILABLE"
+      echo "Framework submodule is at $SUBMOD_COMMIT, latest is $SUBMOD_REMOTE."
+      echo "Update with: \`git submodule update --remote .claude-framework && bash install.sh\`"
+      echo "</framework-context>"
+      echo ""
+    fi
+  fi
+fi
+
 # ─── Current project state ────────────────────────────────────────────────────
 
 if [[ -f "$PROJECT_DIR/PROGRESS.md" ]]; then
