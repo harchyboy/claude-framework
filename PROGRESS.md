@@ -14,24 +14,24 @@
 
 ## What was last worked on
 
-P0+P1 improvements based on autonomous engineering research analysis.
+P2+P3 improvements: git worktrees, context management, local model routing.
 
-**P0 — CLAUDE.md trim**: Reduced from 470 lines (with @imports) to 82 lines with zero `@` imports. References docs on-demand instead of embedding every turn.
+**P2 — Git worktrees**: Replaced file-based task locks (`current_tasks/`) with git worktrees (`.worktrees/<story-id>`). Each Ralph iteration creates an isolated worktree, runs Claude inside it, merges back on completion. No more stale lock files or file conflicts between agents.
 
-**P1 — Docker isolation**: Added `docker/Dockerfile`, `docker/squid.conf`, `docker/docker-compose.yml`. Ralph loop supports `--docker` flag for running Claude inside network-restricted containers. Squid proxy limits traffic to approved domains only.
+**P2 — Context management**: Added previous-iteration context injection to agent prompts. Agents now receive info about what the last iteration did. Added context management instructions to the prompt ("update PROGRESS.md if context is getting large").
 
-**P1 — Session management decision**: Evaluated Claude Squad — it cannot create sessions programmatically (TUI-only). Decision: use tmux + git worktrees directly, Claude Squad as optional monitoring TUI only. Documented in Hartz Land guide.
+**P3 — Local model routing**: Created `scripts/local-model.sh` — routes prompts to Ollama (default: qwen2.5-coder:7b) with automatic Claude fallback. For test generation, docs, lint fixes. Updated model routing table in CLAUDE.md.
 
 ---
 
 ## What's next
 
-1. **Commit all changes** — Large batch from overnight build + P0 + P1
-2. **Connect to Hartz Land** — Set up the remote machine, run `setup.sh`
-3. **Add GitHub PAT** — Configure GitHub MCP with personal access token
-4. **Git worktrees per task** — Replace file-based locks with worktree isolation
-5. **Runtime verification** — Test Playwright MCP with a real project's dev server
-6. **Hartz Command integration** — Review queue UI, daily digest endpoint, confidence dashboard
+1. **Connect to Hartz Land** — Set up the remote machine, run `setup.sh`
+2. **Add GitHub PAT** — Configure GitHub MCP with personal access token
+3. **Install Ollama** — Set up local model for cost-optimized subtasks
+4. **Runtime verification** — Test Playwright MCP with a real project's dev server
+5. **Hartz Command integration** — Review queue UI, daily digest endpoint, confidence dashboard
+6. **Test worktree workflow** — Run Ralph loop end-to-end with worktree isolation
 
 ---
 
@@ -41,6 +41,7 @@ P0+P1 improvements based on autonomous engineering research analysis.
 - Static verification caps confidence at 0.85 — runtime verification needed for higher scores
 - Hartz Land machine not yet connected
 - Claude Squad cannot automate session creation — tmux is the automation layer
+- Ollama not yet installed — local-model.sh falls back to Claude gracefully
 
 ---
 
@@ -51,6 +52,8 @@ P0+P1 improvements based on autonomous engineering research analysis.
 - **Session management**: tmux + worktrees for automation; Claude Squad as optional TUI monitor only
 - **Verification architecture**: Separate agent verifies work against acceptance criteria with proof packets
 - **Confidence thresholds**: 0.9+ = auto-merge, 0.7-0.89 = human review, <0.7 = blocked
+- **Git worktrees**: Replace file locks with worktree-per-story isolation in Ralph loop
+- **Local models**: Ollama + qwen2.5-coder:7b for routine subtasks, auto-fallback to Claude
 - **MCP stack**: Playwright, Memory, Sequential Thinking, GitHub, Filesystem
 
 ---
@@ -61,4 +64,4 @@ P0+P1 improvements based on autonomous engineering research analysis.
 |------|---------------|------------------|
 | — | Initial setup | — |
 | 2026-03-04 | Verification system, Hartz Land scripts, MCP setup, proof packets, review queue | N/A (framework enhancement) |
-| 2026-03-05 | P0: CLAUDE.md trim (470→82 lines), P1: Docker isolation, P1: Session mgmt decision | N/A (framework enhancement) |
+| 2026-03-05 | P0: CLAUDE.md trim, P1: Docker isolation, P1: Session mgmt, P2: Worktrees, P2: Context mgmt, P3: Local models | N/A (framework enhancement) |

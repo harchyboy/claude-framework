@@ -421,6 +421,7 @@ ENTRIES=(
   "# Hartz Claude Framework"
   "agent_logs/"
   "proof/"
+  ".worktrees/"
   ".ralph_prompt_*"
 )
 

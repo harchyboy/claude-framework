@@ -52,7 +52,8 @@ Repo:            [REPLACE]
 | Feature implementation | **Sonnet** |
 | Code review | **Sonnet** |
 | Exploration / grep | **Haiku** |
-| Test generation / docs | **Haiku** |
+| Test generation / docs | **Haiku** or **Local** (Ollama) |
+| Boilerplate / lint fixes | **Local** (Ollama) if available |
 
 ## WORKFLOW GUIDE
 

@@ -126,40 +126,92 @@ emit_telemetry() {
   echo "{\"timestamp\": \"$timestamp\", \"event\": \"$event_type\", $fields}" >> "$TELEMETRY_FILE"
 }
 
-# ─── Helper: clean stale locks ──────────────────────────────────────────────
+# ─── Helper: pick next story ID from PRD ────────────────────────────────────
 
-clean_stale_locks() {
-  if [[ ! -d "current_tasks" ]]; then return; fi
+pick_next_story() {
+  local prd_file="$1"
+  node -e "
+    const prd = JSON.parse(require('fs').readFileSync('$prd_file', 'utf8'));
+    const pending = prd.userStories
+      .filter(s => !s.passes)
+      .sort((a, b) => (a.priority || 99) - (b.priority || 99));
+    if (pending.length > 0) console.log(pending[0].id);
+  " 2>/dev/null || echo ""
+}
+
+# ─── Helper: worktree management ────────────────────────────────────────────
+
+WORKTREE_DIR=".worktrees"
+
+create_worktree() {
+  local story_id="$1"
+  local branch_name="ralph/${story_id}"
+  local worktree_path="${WORKTREE_DIR}/${story_id}"
+
+  # Clean up if stale worktree exists
+  if [[ -d "$worktree_path" ]]; then
+    echo "  🧹 Cleaning stale worktree: $story_id"
+    git worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
+    git branch -D "$branch_name" 2>/dev/null || true
+  fi
+
+  mkdir -p "$WORKTREE_DIR"
+  git worktree add "$worktree_path" -b "$branch_name" HEAD 2>/dev/null
+  echo "$worktree_path"
+}
+
+merge_worktree() {
+  local story_id="$1"
+  local branch_name="ralph/${story_id}"
+  local worktree_path="${WORKTREE_DIR}/${story_id}"
+  local main_branch
+  main_branch=$(git branch --show-current)
+
+  # Check if the worktree branch has any commits ahead
+  if git log "${main_branch}..${branch_name}" --oneline 2>/dev/null | grep -q .; then
+    echo "  🔀 Merging worktree branch: $branch_name"
+    if git merge "$branch_name" --no-edit 2>/dev/null; then
+      echo "  ✅ Merge successful"
+    else
+      echo "  ⚠️  Merge conflict — keeping worktree branch for manual resolution"
+      git merge --abort 2>/dev/null || true
+      return 1
+    fi
+  else
+    echo "  ℹ️  No new commits in worktree"
+  fi
+
+  # Clean up
+  git worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
+  git branch -D "$branch_name" 2>/dev/null || true
+  return 0
+}
+
+clean_stale_worktrees() {
+  if [[ ! -d "$WORKTREE_DIR" ]]; then return; fi
 
   local now
   now=$(date +%s)
   local threshold=$((STALE_LOCK_HOURS * 3600))
-  local cleaned=0
 
-  for lock_file in current_tasks/*.txt; do
-    [[ ! -f "$lock_file" ]] && continue
+  for wt_dir in "$WORKTREE_DIR"/*/; do
+    [[ ! -d "$wt_dir" ]] && continue
+    local story_id
+    story_id=$(basename "$wt_dir")
 
-    local file_age
-    file_age=$(node -e "
+    local dir_age
+    dir_age=$(node -e "
       const fs = require('fs');
-      const stat = fs.statSync('$lock_file');
+      const stat = fs.statSync('$wt_dir');
       console.log(Math.floor((Date.now() - stat.mtimeMs) / 1000));
     " 2>/dev/null || echo "0")
 
-    if [[ "$file_age" -gt "$threshold" ]]; then
-      local task_name
-      task_name=$(basename "$lock_file" .txt)
-      echo "  🧹 Removing stale lock: $task_name (${STALE_LOCK_HOURS}h+ old)"
-      rm -f "$lock_file"
-      cleaned=$((cleaned + 1))
+    if [[ "$dir_age" -gt "$threshold" ]]; then
+      echo "  🧹 Removing stale worktree: $story_id (${STALE_LOCK_HOURS}h+ old)"
+      git worktree remove "$wt_dir" --force 2>/dev/null || rm -rf "$wt_dir"
+      git branch -D "ralph/${story_id}" 2>/dev/null || true
     fi
   done
-
-  if [[ "$cleaned" -gt 0 ]]; then
-    git add current_tasks/ 2>/dev/null || true
-    git commit -m "chore: remove $cleaned stale task lock(s)" 2>/dev/null || true
-    git push 2>/dev/null || true
-  fi
 }
 
 # ─── Find PRD ────────────────────────────────────────────────────────────────
@@ -223,7 +275,7 @@ fi
 
 # ─── Ensure directories ──────────────────────────────────────────────────────
 
-mkdir -p agent_logs current_tasks
+mkdir -p agent_logs
 
 # ─── Build agent prompt ──────────────────────────────────────────────────────
 
@@ -241,17 +293,21 @@ build_iteration_prompt() {
     solutions_index=$(grep -h "^title:" docs/solutions/*.md 2>/dev/null | sed 's/title: //' | head -20 || true)
   fi
 
-  local current_tasks_list=""
-  if compgen -G "current_tasks/*.txt" > /dev/null 2>&1; then
-    current_tasks_list=$(cat current_tasks/*.txt 2>/dev/null | tr '\n' ', ' || true)
+  # Previous iteration context (if any)
+  local prev_context=""
+  if [[ "$ITERATION" -gt 1 ]] && [[ -n "${PREV_STORY_ID:-}" ]]; then
+    prev_context="Previous iteration worked on ${PREV_STORY_ID} (result: ${PREV_RESULT:-unknown}). Check PROGRESS.md for details."
   fi
 
   cat <<PROMPT
 # Ralph Loop — Autonomous Development Session
 
 ## Your objective
-Work through the PRD below, implementing one user story per session.
-Each story must be fully complete (tests passing, code committed) before you stop.
+Implement story **${STORY_ID:-next pending}** from the PRD below.
+The story must be fully complete (tests passing, code committed) before you stop.
+${prev_context:+
+## Previous iteration
+${prev_context}}
 
 ## Current project state
 
@@ -260,9 +316,6 @@ ${progress_content:-No PROGRESS.md found. Start by creating one.}
 
 ### Available learnings (docs/solutions/)
 ${solutions_index:-No solutions documented yet.}
-
-### Currently locked tasks (do NOT claim these)
-${current_tasks_list:-None locked.}
 
 ## PRD
 \`\`\`json
@@ -274,24 +327,21 @@ ${prd_content}
 1. **Read first**: Review PROGRESS.md, docs/CODE-STANDARDS.md, and docs/solutions/ for relevant context
 2. **Follow code standards**: docs/CODE-STANDARDS.md contains mandatory patterns — apply them during implementation, not after review
 3. **Check failed approaches**: Read docs/failed-approaches.md before attempting solutions
-4. **Pick a story**: Select the highest-priority story where \`passes: false\`
-   - Skip any story with a lock file in current_tasks/
-5. **Claim it**: Write \`[story-id] [title]\` to \`current_tasks/[story-id].txt\`
-   - \`git add current_tasks/ && git commit -m "claim: [story-id]" && git push\`
-   - If push fails: another agent claimed it — pick a different story
-6. **Implement**: Build the feature following docs/CODE-STANDARDS.md patterns
-7. **Test**: Run the quality gate: \`bash scripts/quality-gate.sh\`
+4. **Implement story ${STORY_ID:-"(highest priority with passes: false)"}**: Build the feature following docs/CODE-STANDARDS.md patterns
+5. **Test**: Run the quality gate: \`bash scripts/quality-gate.sh\`
    - Fix ALL failures before proceeding
-8. **Update PROGRESS.md**: Add what you did, what's next, any discoveries
-9. **Commit**: Use conventional commit format: \`feat: [description] (closes [story-id])\`
-10. **Update PRD**: Mark story \`passes: true\` in prd.json, commit that too
-11. **Release lock**: \`git rm current_tasks/[story-id].txt && git commit -m "release: [story-id]" && git push\`
-12. **Stop**: Exit after completing ONE story. The loop will restart for the next.
+6. **Update PROGRESS.md**: Add what you did, what's next, any discoveries
+7. **Commit**: Use conventional commit format: \`feat: [description] (closes ${STORY_ID:-[story-id]})\`
+8. **Update PRD**: Mark story \`passes: true\` in prd.json, commit that too
+9. **Stop**: Exit after completing ONE story. The loop will restart for the next.
+
+## Context management
+- If your context is getting large, update PROGRESS.md with your current findings before continuing
+- Keep commits small and frequent — one logical change per commit
 
 ## Rules
 - NEVER skip the quality gate
 - NEVER mark a story as passed without all acceptance criteria met
-- NEVER work on a locked task
 - If stuck after 3 attempts: document in docs/failed-approaches.md and pick a different story
 - Check docs/solutions/ before implementing any non-trivial pattern
 
@@ -310,6 +360,8 @@ echo "   Quality gate: $QUALITY_GATE"
 echo "   Review: $REVIEW"
 echo "   Telemetry: $TELEMETRY"
 echo "   Verification: $VERIFY"
+echo "   Docker: $USE_DOCKER"
+echo "   Worktrees: $WORKTREE_DIR"
 echo "   PRD: $PRD_DIR"
 echo ""
 
@@ -326,8 +378,8 @@ STORIES_COMPLETED=0
 while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ITERATION=$((ITERATION + 1))
 
-  # Clean stale locks before each iteration
-  clean_stale_locks
+  # Clean stale worktrees before each iteration
+  clean_stale_worktrees
 
   # Check if all stories are done
   remaining=$(count_pending "${PRD_DIR}/prd.json")
@@ -359,6 +411,22 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   # Sync with remote
   git pull origin "$(git branch --show-current)" --rebase 2>/dev/null || true
 
+  # Pick next story and create worktree
+  STORY_ID=$(pick_next_story "${PRD_DIR}/prd.json")
+  if [[ -z "$STORY_ID" ]]; then
+    echo "  ℹ️  No pending stories found"
+    break
+  fi
+  echo "  📌 Target story: $STORY_ID"
+
+  WORKTREE_PATH=""
+  if git worktree list > /dev/null 2>&1; then
+    WORKTREE_PATH=$(create_worktree "$STORY_ID") || {
+      echo "  ⚠️  Worktree creation failed — running in main tree"
+      WORKTREE_PATH=""
+    }
+  fi
+
   COMMIT=$(git rev-parse --short=6 HEAD)
   LOG_FILE="agent_logs/iteration_${ITERATION}_${COMMIT}.log"
 
@@ -385,8 +453,10 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     --model "$MODEL"
   )
 
-  # Docker wrapper — runs Claude inside an isolated container with network restrictions
+  # Docker/worktree wrapper — runs Claude in the right context
   run_claude() {
+    local work_dir="${WORKTREE_PATH:-$(pwd)}"
+
     if [[ "$USE_DOCKER" == "true" ]]; then
       local DOCKER_COMPOSE_FILE=""
       for f in docker/docker-compose.yml .claude-framework/docker/docker-compose.yml; do
@@ -394,10 +464,10 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       done
       if [[ -z "$DOCKER_COMPOSE_FILE" ]]; then
         echo "  ⚠️  Docker compose file not found — falling back to direct execution"
-        claude "${CLAUDE_ARGS[@]}"
+        (cd "$work_dir" && claude "${CLAUDE_ARGS[@]}")
         return $?
       fi
-      WORKSPACE="$(pwd)" PROMPT="$(cat /tmp/ralph_prompt_$$.md)" \
+      WORKSPACE="$work_dir" PROMPT="$(cat /tmp/ralph_prompt_$$.md)" \
         docker compose -f "$DOCKER_COMPOSE_FILE" run --rm \
         -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
         agent \
@@ -405,7 +475,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         -p "$(cat /tmp/ralph_prompt_$$.md)" \
         --model "$MODEL"
     else
-      claude "${CLAUDE_ARGS[@]}"
+      (cd "$work_dir" && claude "${CLAUDE_ARGS[@]}")
     fi
   }
 
@@ -449,6 +519,14 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   fi
 
   rm -f /tmp/ralph_prompt_$$.md
+
+  # Merge worktree back to main branch
+  if [[ -n "$WORKTREE_PATH" ]]; then
+    merge_worktree "$STORY_ID" || {
+      echo "  ⚠️  Worktree merge failed — manual resolution needed for $STORY_ID"
+      emit_telemetry "worktree_merge_failed" "story_id=$STORY_ID" "iteration=$ITERATION"
+    }
+  fi
 
   # Extract cost if available
   if [[ "$TRACK_COST" == "true" ]] && [[ "$USE_MAX_PLAN" != "true" ]]; then
@@ -560,6 +638,18 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     "stories_remaining=$new_remaining" \
     "files_changed=$FILES_CHANGED" \
     "total_cost=$TOTAL_COST"
+
+  # Track for next iteration's context injection
+  PREV_STORY_ID="$STORY_ID"
+  if [[ "$STORIES_THIS_ITER" -gt 0 ]]; then
+    PREV_RESULT="completed"
+  elif [[ "$GATE_RESULT" == "failed" ]]; then
+    PREV_RESULT="quality-gate-failed"
+  elif [[ "$TIMED_OUT" == "true" ]]; then
+    PREV_RESULT="timed-out"
+  else
+    PREV_RESULT="in-progress"
+  fi
 
   echo ""
   sleep 5

@@ -18,20 +18,35 @@ Options:
 ```
 
 ## Each iteration
-0. Clean stale task locks (>2 hours old) — prevents crashed agents from blocking stories
-1. `git pull origin main` — sync with remote
-2. Read `PROGRESS.md` and `docs/solutions/` — bootstrap context
-3. Check `current_tasks/` — skip locked tasks
-4. Pick highest-priority uncomplete task from PRD
-5. Claim it: `echo "task description" > current_tasks/task-name.txt && git add && git commit && git push`
-6. Implement with tests
-7. Run quality gate — fix failures before continuing
-8. Run verification (if `--verify`) — generate proof packet, score confidence
-9. Update `PROGRESS.md`
-10. Commit and push
-11. Remove lock file, commit
+0. Clean stale worktrees (>2 hours old)
+1. `git pull` — sync with remote
+2. Pick highest-priority pending story from PRD
+3. Create git worktree: `.worktrees/<story-id>` on branch `ralph/<story-id>`
+4. Run Claude inside the worktree — isolated from other agents
+5. Implement with tests, run quality gate
+6. Run verification (if `--verify`) — generate proof packet, score confidence
+7. Merge worktree branch back to main branch
+8. Clean up worktree
+9. Push
 
-**If push fails (conflict):** another agent claimed the task — pick a different one.
+**Multi-agent isolation:** Each agent works in its own worktree — no file conflicts, no lock files.
+
+## Local model routing (cost optimization)
+
+For routine subtasks, use a local Ollama model instead of Claude:
+
+```bash
+# Route a prompt through local model (falls back to Claude if Ollama unavailable)
+bash scripts/local-model.sh "Generate unit tests for src/auth.ts"
+
+# Specify a different model
+bash scripts/local-model.sh "Fix ESLint errors" --model codellama:7b
+
+# Pipe from stdin
+cat prompt.md | bash scripts/local-model.sh -
+```
+
+Requires [Ollama](https://ollama.com) running locally. Default model: `qwen2.5-coder:7b`.
 
 ## Verification & Proof Packets
 
