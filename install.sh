@@ -178,10 +178,12 @@ dirs=(
   "$TARGET_DIR/.claude/skills"
   "$TARGET_DIR/.claude/docs"
   "$TARGET_DIR/scripts/ralph-moss/prds"
+  "$TARGET_DIR/scripts/hartz-land"
   "$TARGET_DIR/docs/solutions"
   "$TARGET_DIR/docs/architecture"
   "$TARGET_DIR/current_tasks"
   "$TARGET_DIR/agent_logs"
+  "$TARGET_DIR/proof"
 )
 
 for dir in "${dirs[@]}"; do
@@ -325,7 +327,25 @@ if [[ "$INSTALL_SCRIPTS" == "true" ]]; then
       chmod +x "$dest"
     fi
   done
+
+  # Copy hartz-land scripts
+  if [[ -d "$FRAMEWORK_DIR/scripts/hartz-land" ]]; then
+    for script in "$FRAMEWORK_DIR/scripts/hartz-land/"*.sh; do
+      [[ ! -f "$script" ]] && continue
+      name=$(basename "$script")
+      dest="$TARGET_DIR/scripts/hartz-land/$name"
+      if copy_file "$script" "$dest" "hartz-land/$name"; then
+        chmod +x "$dest"
+      fi
+    done
+  fi
   ok "Scripts installed"
+
+  # Copy .mcp.json template if not present
+  if [[ -f "$FRAMEWORK_DIR/.mcp.json" ]] && [[ ! -f "$TARGET_DIR/.mcp.json" ]]; then
+    cp "$FRAMEWORK_DIR/.mcp.json" "$TARGET_DIR/.mcp.json"
+    info "Installed .mcp.json template (configure MCPs with: bash scripts/setup-mcps.sh)"
+  fi
 fi
 
 # ─── CLAUDE.md ───────────────────────────────────────────────────────────────
@@ -400,6 +420,7 @@ GITIGNORE="$TARGET_DIR/.gitignore"
 ENTRIES=(
   "# Hartz Claude Framework"
   "agent_logs/"
+  "proof/"
   ".ralph_prompt_*"
 )
 

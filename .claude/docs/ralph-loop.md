@@ -12,6 +12,8 @@ Options:
   --timeout <min>     Per-iteration timeout in minutes (default: 30)
   --quality-gate      Run typecheck/lint/tests after each iteration
   --review            Spawn review agent after implementation
+  --verify            Run independent verification + generate proof packets
+  --verify-runtime    Include Playwright browser verification
   --strict            Fail on lint warnings
 ```
 
@@ -24,11 +26,46 @@ Options:
 5. Claim it: `echo "task description" > current_tasks/task-name.txt && git add && git commit && git push`
 6. Implement with tests
 7. Run quality gate — fix failures before continuing
-8. Update `PROGRESS.md`
-9. Commit and push
-10. Remove lock file, commit
+8. Run verification (if `--verify`) — generate proof packet, score confidence
+9. Update `PROGRESS.md`
+10. Commit and push
+11. Remove lock file, commit
 
 **If push fails (conflict):** another agent claimed the task — pick a different one.
+
+## Verification & Proof Packets
+
+When `--verify` is enabled, each completed story generates a proof packet:
+
+```
+proof/<story-id>/
+├── criteria.md        # Original acceptance criteria
+├── diff.patch         # Code changes
+├── test-results.txt   # Test output
+├── verification.md    # Verification report
+├── verdict.json       # Machine-readable verdict + confidence score
+└── screenshots/       # Evidence (with --verify-runtime)
+```
+
+Confidence scoring:
+- **0.9+**: All criteria verified — auto-merge candidate
+- **0.7–0.89**: Mostly verified — queued for human review
+- **< 0.7**: Failures found — blocked until reviewed
+
+Review queue: `bash scripts/hartz-land/review-queue.sh`
+
+## Hartz Land (Multi-Project Overnight)
+
+Run Ralph across all projects on a dedicated machine:
+
+```bash
+bash scripts/hartz-land/start-all.sh --verify --max-concurrent 3
+bash scripts/hartz-land/monitor.sh --watch
+bash scripts/hartz-land/daily-digest.sh     # morning review
+bash scripts/hartz-land/review-queue.sh     # approve/reject
+```
+
+See `docs/HARTZ-LAND-GUIDE.md` for full setup.
 
 ---
 

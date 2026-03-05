@@ -1,0 +1,102 @@
+# docker-compose.yml — Run Claude agents with network isolation
+#
+# Usage:
+#   # Build the agent image
+#   docker compose -f docker/docker-compose.yml build
+#
+#   # Run a single agent with a prompt
+#   WORKSPACE=./my-project PROMPT="Implement US-001" \
+#     docker compose -f docker/docker-compose.yml run --rm agent
+#
+#   # Run Ralph loop in Docker
+#   WORKSPACE=./my-project \
+#     docker compose -f docker/docker-compose.yml run --rm ralph
+#
+# Environment variables:
+#   WORKSPACE     Path to the project directory (required)
+#   PROMPT        Claude prompt for single-shot agent mode
+#   ANTHROPIC_API_KEY  Your API key (or set in .env)
+#   RALPH_ARGS    Additional arguments for Ralph (e.g., "--verify --quality-gate")
+
+services:
+  # Network proxy — restricts agent traffic to approved domains only
+  proxy:
+    image: ubuntu/squid:latest
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      - agent-net
+    healthcheck:
+      test: ["CMD", "squidclient", "-h", "localhost", "mgr:info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Single-shot agent — runs one Claude prompt and exits
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - http_proxy=http://proxy:3128
+      - https_proxy=http://proxy:3128
+      - HTTP_PROXY=http://proxy:3128
+      - HTTPS_PROXY=http://proxy:3128
+      - no_proxy=localhost,127.0.0.1
+    volumes:
+      - ${WORKSPACE:-.}:/workspace
+      - agent-home:/home/agent
+    working_dir: /workspace
+    depends_on:
+      proxy:
+        condition: service_healthy
+    networks:
+      - agent-net
+    entrypoint: ["claude"]
+    command: ["--dangerously-skip-permissions", "-p", "${PROMPT:-Show help}", "--output-format", "json"]
+    # Resource limits — prevent one agent from starving others
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+
+  # Ralph loop agent — runs autonomous development loop in Docker
+  ralph:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - http_proxy=http://proxy:3128
+      - https_proxy=http://proxy:3128
+      - HTTP_PROXY=http://proxy:3128
+      - HTTPS_PROXY=http://proxy:3128
+      - no_proxy=localhost,127.0.0.1
+    volumes:
+      - ${WORKSPACE:-.}:/workspace
+      - agent-home:/home/agent
+      - review-queue:/home/agent/.hartz-claude-framework/review-queue
+    working_dir: /workspace
+    depends_on:
+      proxy:
+        condition: service_healthy
+    networks:
+      - agent-net
+    entrypoint: ["bash"]
+    command: ["scripts/ralph.sh", "--quality-gate", "--telemetry", "--verify"]
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+
+networks:
+  agent-net:
+    driver: bridge
+    internal: false  # Allows proxy to reach internet; agents route through proxy
+
+volumes:
+  agent-home:
+  review-queue:

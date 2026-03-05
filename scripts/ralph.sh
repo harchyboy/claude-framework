@@ -16,6 +16,11 @@
 #   --no-cost           Disable cost tracking
 #   --timeout <min>     Per-iteration timeout in minutes (default: 30)
 #   --telemetry         Write structured JSON logs to agent_logs/ralph-telemetry.jsonl
+#   --verify            Run independent verification after each story (generates proof packets)
+#   --verify-runtime    Include Playwright runtime verification (requires running dev server)
+#   --dev-cmd <cmd>     Dev server start command for runtime verification
+#   --dev-url <url>     Dev server URL (default: http://localhost:3000)
+#   --docker            Run Claude inside Docker container with network isolation
 #   --help              Show this help
 
 set -euo pipefail
@@ -35,6 +40,11 @@ TRACK_COST=true
 TOTAL_COST=0
 ITER_TIMEOUT=30
 TELEMETRY=false
+VERIFY=false
+VERIFY_RUNTIME=false
+DEV_CMD=""
+DEV_URL="http://localhost:3000"
+USE_DOCKER=false
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
 TELEMETRY_FILE="agent_logs/ralph-telemetry.jsonl"
@@ -59,6 +69,11 @@ while [[ $# -gt 0 ]]; do
     --no-cost)       TRACK_COST=false ;;
     --timeout)       ITER_TIMEOUT="$2"; shift ;;
     --telemetry)     TELEMETRY=true ;;
+    --verify)        VERIFY=true ;;
+    --verify-runtime) VERIFY_RUNTIME=true; VERIFY=true ;;
+    --dev-cmd)       DEV_CMD="$2"; shift ;;
+    --dev-url)       DEV_URL="$2"; shift ;;
+    --docker)        USE_DOCKER=true ;;
     --help)
       sed -n '2,21p' "$0"
       exit 0
@@ -294,6 +309,7 @@ echo "   Iteration timeout: ${ITER_TIMEOUT} minutes"
 echo "   Quality gate: $QUALITY_GATE"
 echo "   Review: $REVIEW"
 echo "   Telemetry: $TELEMETRY"
+echo "   Verification: $VERIFY"
 echo "   PRD: $PRD_DIR"
 echo ""
 
@@ -357,7 +373,11 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   fi
 
   # Run Claude with timeout
-  echo "  🤖 Running Claude ($MODEL)..."
+  if [[ "$USE_DOCKER" == "true" ]]; then
+    echo "  🤖 Running Claude ($MODEL) in Docker..."
+  else
+    echo "  🤖 Running Claude ($MODEL)..."
+  fi
 
   CLAUDE_ARGS=(
     --dangerously-skip-permissions
@@ -365,12 +385,36 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     --model "$MODEL"
   )
 
+  # Docker wrapper — runs Claude inside an isolated container with network restrictions
+  run_claude() {
+    if [[ "$USE_DOCKER" == "true" ]]; then
+      local DOCKER_COMPOSE_FILE=""
+      for f in docker/docker-compose.yml .claude-framework/docker/docker-compose.yml; do
+        if [[ -f "$f" ]]; then DOCKER_COMPOSE_FILE="$f"; break; fi
+      done
+      if [[ -z "$DOCKER_COMPOSE_FILE" ]]; then
+        echo "  ⚠️  Docker compose file not found — falling back to direct execution"
+        claude "${CLAUDE_ARGS[@]}"
+        return $?
+      fi
+      WORKSPACE="$(pwd)" PROMPT="$(cat /tmp/ralph_prompt_$$.md)" \
+        docker compose -f "$DOCKER_COMPOSE_FILE" run --rm \
+        -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+        agent \
+        --dangerously-skip-permissions \
+        -p "$(cat /tmp/ralph_prompt_$$.md)" \
+        --model "$MODEL"
+    else
+      claude "${CLAUDE_ARGS[@]}"
+    fi
+  }
+
   ITER_START=$(date +%s)
   TIMED_OUT=false
 
   if command -v timeout > /dev/null 2>&1; then
     # GNU timeout available (Linux, MSYS)
-    if ! timeout "${TIMEOUT_SECONDS}s" claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$LOG_FILE"; then
+    if ! timeout "${TIMEOUT_SECONDS}s" run_claude 2>&1 | tee "$LOG_FILE"; then
       ITER_END=$(date +%s)
       ITER_ELAPSED=$(( ITER_END - ITER_START ))
       if [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
@@ -386,7 +430,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
   else
     # No timeout command — run with background watchdog
-    claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$LOG_FILE" &
+    run_claude 2>&1 | tee "$LOG_FILE" &
     CLAUDE_PID=$!
 
     # Watchdog: kill if exceeds timeout
@@ -446,9 +490,61 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   new_remaining=$(count_pending "${PRD_DIR}/prd.json")
 
   STORIES_THIS_ITER=0
+  COMPLETED_STORY_ID=""
   if [[ "$new_remaining" -lt "$remaining" ]]; then
     STORIES_THIS_ITER=$((remaining - new_remaining))
     echo "  ✅ $STORIES_THIS_ITER story completed ($new_remaining remaining)"
+
+    # Find which story was just completed (for verification)
+    COMPLETED_STORY_ID=$(node -e "
+      const prd = JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+      const completed = prd.userStories.filter(s => s.passes);
+      if (completed.length > 0) console.log(completed[completed.length - 1].id);
+    " 2>/dev/null || echo "")
+  fi
+
+  # ─── Verification step ─────────────────────────────────────────────────────
+  VERIFY_RESULT="skipped"
+  VERIFY_CONFIDENCE=0
+
+  if [[ "$VERIFY" == "true" ]] && [[ -n "$COMPLETED_STORY_ID" ]] && [[ -f "scripts/generate-proof.sh" ]]; then
+    echo "  🔍 Running verification for $COMPLETED_STORY_ID..."
+
+    VERIFY_ARGS=("$COMPLETED_STORY_ID" "${PRD_DIR}/prd.json")
+    if [[ "$VERIFY_RUNTIME" != "true" ]]; then
+      VERIFY_ARGS+=("--skip-runtime")
+    else
+      [[ -n "$DEV_CMD" ]] && VERIFY_ARGS+=("--dev-cmd" "$DEV_CMD")
+      VERIFY_ARGS+=("--dev-url" "$DEV_URL")
+    fi
+
+    if bash scripts/generate-proof.sh "${VERIFY_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+      # Read verdict
+      if [[ -f "proof/$COMPLETED_STORY_ID/verdict.json" ]]; then
+        VERIFY_CONFIDENCE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('proof/$COMPLETED_STORY_ID/verdict.json','utf8')).confidence)" 2>/dev/null || echo "0")
+        VERIFY_VERDICT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('proof/$COMPLETED_STORY_ID/verdict.json','utf8')).verdict)" 2>/dev/null || echo "UNKNOWN")
+
+        if [[ "$VERIFY_VERDICT" == "PASS" ]]; then
+          VERIFY_RESULT="passed"
+          echo "  ✅ Verification passed (confidence: $VERIFY_CONFIDENCE)"
+        else
+          VERIFY_RESULT="failed"
+          echo "  ❌ Verification failed (confidence: $VERIFY_CONFIDENCE)"
+        fi
+      else
+        VERIFY_RESULT="error"
+        echo "  ⚠️  Verification ran but no verdict produced"
+      fi
+    else
+      VERIFY_RESULT="error"
+      echo "  ⚠️  Verification script failed"
+    fi
+
+    emit_telemetry "verification" \
+      "iteration=$ITERATION" \
+      "story_id=$COMPLETED_STORY_ID" \
+      "result=$VERIFY_RESULT" \
+      "confidence=$VERIFY_CONFIDENCE"
   fi
 
   # Count files changed in this iteration
@@ -458,6 +554,8 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     "iteration=$ITERATION" \
     "wall_time_secs=$ITER_WALL_SECS" \
     "quality_gate=$GATE_RESULT" \
+    "verification=$VERIFY_RESULT" \
+    "verify_confidence=$VERIFY_CONFIDENCE" \
     "stories_completed=$STORIES_THIS_ITER" \
     "stories_remaining=$new_remaining" \
     "files_changed=$FILES_CHANGED" \
@@ -506,5 +604,17 @@ node -e "
 echo ""
 echo "Next steps:"
 echo "  /review          — Run parallel code review"
+echo "  /verify          — Independent verification of completed stories"
 echo "  /compound        — Capture learnings to docs/solutions/"
 echo ""
+
+# Show proof packet summary if verification was enabled
+if [[ "$VERIFY" == "true" ]] && [[ -d "proof" ]]; then
+  PROOF_COUNT=$(ls proof/*/verdict.json 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+  if [[ "$PROOF_COUNT" -gt 0 ]]; then
+    echo "Verification:"
+    echo "  Proof packets: $PROOF_COUNT"
+    echo "  Review queue:  bash scripts/hartz-land/review-queue.sh"
+    echo ""
+  fi
+fi
