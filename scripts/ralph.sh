@@ -95,7 +95,7 @@ count_pending() {
   local prd_file="$1"
   node -e "
     const prd = JSON.parse(require('fs').readFileSync('$prd_file', 'utf8'));
-    const pending = prd.userStories.filter(s => !s.passes);
+    const pending = prd.userStories.filter(s => !s.passes && !s.stuck);
     console.log(pending.length);
   " 2>/dev/null || echo "0"
 }
@@ -139,7 +139,7 @@ pick_next_story() {
   node -e "
     const prd = JSON.parse(require('fs').readFileSync('$prd_file', 'utf8'));
     const pending = prd.userStories
-      .filter(s => !s.passes)
+      .filter(s => !s.passes && !s.stuck)
       .sort((a, b) => (a.priority || 99) - (b.priority || 99));
     if (pending.length > 0) console.log(pending[0].id);
   " 2>/dev/null || echo ""
@@ -176,13 +176,39 @@ merge_worktree() {
   # Check if the worktree branch has any commits ahead
   if git log "${main_branch}..${branch_name}" --oneline 2>/dev/null | grep -q .; then
     echo "  🔀 Merging worktree branch: $branch_name"
+    # Stash any uncommitted changes to prevent merge conflicts
+    local stashed=false
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+      git stash push -q -m "ralph-merge-${story_id}" 2>/dev/null && stashed=true
+    fi
     if git merge "$branch_name" --no-edit 2>/dev/null; then
       echo "  ✅ Merge successful"
     else
-      echo "  ⚠️  Merge conflict — keeping worktree branch for manual resolution"
-      git merge --abort 2>/dev/null || true
-      return 1
+      # Auto-resolve common conflicts: PROGRESS.md, prd.json, package-lock.json
+      local conflicted
+      conflicted=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+      local auto_resolvable=true
+      for f in $conflicted; do
+        case "$f" in
+          PROGRESS.md|*/prd.json|package-lock.json)
+            git checkout --theirs "$f" 2>/dev/null && git add "$f" 2>/dev/null
+            echo "  🔧 Auto-resolved conflict in $f (took worktree version)"
+            ;;
+          *)
+            auto_resolvable=false
+            ;;
+        esac
+      done
+      if [[ "$auto_resolvable" == true ]] && git commit --no-edit 2>/dev/null; then
+        echo "  ✅ Merge successful (with auto-resolved conflicts)"
+      else
+        echo "  ⚠️  Merge conflict — keeping worktree branch for manual resolution"
+        git merge --abort 2>/dev/null || true
+        [[ "$stashed" == true ]] && git stash pop -q 2>/dev/null || true
+        return 1
+      fi
     fi
+    [[ "$stashed" == true ]] && git stash pop -q 2>/dev/null || true
   else
     echo "  ℹ️  No new commits in worktree"
   fi
@@ -499,6 +525,10 @@ emit_telemetry "session_start" \
 
 ITERATION=0
 STORIES_COMPLETED=0
+declare -A STORY_FAIL_COUNT 2>/dev/null || true   # track consecutive failures per story
+LAST_STORY=""
+CONSECUTIVE_SAME=0
+MAX_RETRIES_PER_STORY=2   # after this many failures on same story, escalate
 
 while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ITERATION=$((ITERATION + 1))
@@ -542,6 +572,59 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     echo "  ℹ️  No pending stories found"
     break
   fi
+
+  # ─── Stuck detection: same story failing repeatedly ───────────────────────
+  if [[ "$STORY_ID" == "$LAST_STORY" ]]; then
+    CONSECUTIVE_SAME=$((CONSECUTIVE_SAME + 1))
+  else
+    CONSECUTIVE_SAME=0
+    LAST_STORY="$STORY_ID"
+  fi
+
+  if [[ "$CONSECUTIVE_SAME" -ge "$MAX_RETRIES_PER_STORY" ]]; then
+    echo ""
+    echo "  🚨 STUCK DETECTED: $STORY_ID has failed $CONSECUTIVE_SAME consecutive times"
+    echo "  🚨 Last failure reason logged below. Stopping to avoid wasting resources."
+    echo ""
+    emit_telemetry "stuck_detected" "story_id=$STORY_ID" "consecutive_failures=$CONSECUTIVE_SAME"
+
+    # Write a stuck report for humans
+    STUCK_FILE="${PRD_DIR}/STUCK-${STORY_ID}.md"
+    {
+      echo "# STUCK: $STORY_ID"
+      echo ""
+      echo "**Detected:** $(date '+%Y-%m-%d %H:%M:%S')"
+      echo "**Consecutive failures:** $CONSECUTIVE_SAME"
+      echo "**Iteration:** $ITERATION / $MAX_ITERATIONS"
+      echo ""
+      echo "## Last log tail"
+      echo '```'
+      tail -40 "$LOG_FILE" 2>/dev/null || echo "(no log available)"
+      echo '```'
+      echo ""
+      echo "## Action needed"
+      echo "A human or Opus-level agent needs to investigate and fix the root cause."
+      echo "Once fixed, restart Ralph to continue."
+    } > "$STUCK_FILE"
+    echo "  📝 Wrote stuck report: $STUCK_FILE"
+
+    # Skip this story — mark it stuck and move to next
+    node -e "
+      const fs = require('fs');
+      const prd = JSON.parse(fs.readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+      const story = prd.userStories.find(s => s.id === '$STORY_ID');
+      if (story) {
+        story.stuck = true;
+        story.stuckReason = 'Failed $CONSECUTIVE_SAME consecutive attempts';
+        fs.writeFileSync('${PRD_DIR}/prd.json', JSON.stringify(prd, null, 2));
+      }
+    " 2>/dev/null || true
+
+    CONSECUTIVE_SAME=0
+    LAST_STORY=""
+    echo "  ⏭️  Skipping $STORY_ID — moving to next story"
+    continue
+  fi
   echo "  📌 Target story: $STORY_ID"
 
   WORKTREE_PATH=""
@@ -572,13 +655,10 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     echo "  🤖 Running Claude ($MODEL)..."
   fi
 
-  CLAUDE_ARGS=(
-    --dangerously-skip-permissions
-    -p "$(cat /tmp/ralph_prompt_$$.md)"
-    --model "$MODEL"
-  )
+  PROMPT_FILE="/tmp/ralph_prompt_$$.md"
 
   # Docker/worktree wrapper — runs Claude in the right context
+  # Uses --prompt-file to avoid "Argument list too long" on Windows
   run_claude() {
     local work_dir="${WORKTREE_PATH:-$(pwd)}"
 
@@ -592,18 +672,17 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       done
       if [[ -z "$DOCKER_COMPOSE_FILE" ]]; then
         echo "  ⚠️  Docker compose file not found — falling back to direct execution"
-        (cd "$work_dir" && claude "${CLAUDE_ARGS[@]}")
+        (cd "$work_dir" && claude --dangerously-skip-permissions -p --model "$MODEL" < "$PROMPT_FILE")
         return $?
       fi
-      WORKSPACE="$work_dir" PROMPT="$(cat /tmp/ralph_prompt_$$.md)" \
+      WORKSPACE="$work_dir" \
         docker compose -f "$DOCKER_COMPOSE_FILE" run --rm \
         -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
         agent \
         --dangerously-skip-permissions \
-        -p "$(cat /tmp/ralph_prompt_$$.md)" \
-        --model "$MODEL"
+        -p --model "$MODEL" < "$PROMPT_FILE"
     else
-      (cd "$work_dir" && claude "${CLAUDE_ARGS[@]}")
+      (cd "$work_dir" && claude --dangerously-skip-permissions -p --model "$MODEL" < "$PROMPT_FILE")
     fi
   }
 
@@ -653,6 +732,21 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       echo "  ⚠️  Worktree merge failed — manual resolution needed for $STORY_ID"
       emit_telemetry "worktree_merge_failed" "story_id=$STORY_ID" "iteration=$ITERATION"
     }
+  fi
+
+  # Post-merge: ensure prd.json reflects completed work
+  # Worktree Claude may commit code without updating prd.json on the main branch
+  if git log --oneline -5 | grep -qi "$STORY_ID"; then
+    node -e "
+      const fs = require('fs');
+      const prd = JSON.parse(fs.readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+      const story = prd.userStories.find(s => s.id === '$STORY_ID');
+      if (story && !story.passes) {
+        story.passes = true;
+        fs.writeFileSync('${PRD_DIR}/prd.json', JSON.stringify(prd, null, 2));
+        console.log('  📝 Marked $STORY_ID as passed in prd.json (post-merge sync)');
+      }
+    " 2>/dev/null || true
   fi
 
   # Extract cost if available
@@ -827,10 +921,15 @@ node -e "
   const prd = JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json', 'utf8'));
   const total = prd.userStories.length;
   const done = prd.userStories.filter(s => s.passes).length;
-  const pending = prd.userStories.filter(s => !s.passes);
+  const pending = prd.userStories.filter(s => !s.passes && !s.stuck);
+  const stuck = prd.userStories.filter(s => s.stuck);
   console.log('Stories: ' + done + '/' + total + ' complete');
+  if (stuck.length > 0) {
+    console.log('STUCK (' + stuck.length + '):');
+    stuck.forEach(s => console.log('  🚨 ' + s.id + ': ' + s.title + ' — ' + (s.stuckReason || 'unknown')));
+  }
   if (pending.length > 0) {
-    console.log('Remaining:');
+    console.log('Remaining (' + pending.length + '):');
     pending.forEach(s => console.log('  - ' + s.id + ': ' + s.title));
   }
 "
