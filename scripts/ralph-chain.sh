@@ -81,11 +81,11 @@ while true; do
       FAILED_PRDS=$((FAILED_PRDS + 1))
       echo "❌ $remaining stories still incomplete in $FOUND_PRD"
       # Check for stuck stories — Ralph should have already flagged them
-      stuck=$(node -e "
-        const prd = JSON.parse(require('fs').readFileSync('${FOUND_PRD}prd.json', 'utf8'));
-        prd.userStories.filter(s => s.stuck).forEach(s => console.log('  🚨 STUCK: ' + s.id + ' — ' + (s.stuckReason || 'unknown')));
-      " 2>/dev/null || true)
-      [[ -n "$stuck" ]] && echo "$stuck"
+      node -e "
+        var prd = JSON.parse(require('fs').readFileSync('${FOUND_PRD}prd.json', 'utf8'));
+        var stuck = prd.userStories.filter(function(s) { return s.stuck; });
+        stuck.forEach(function(s) { console.log('  🚨 STUCK: ' + s.id + ' — ' + (s.stuckReason || 'unknown')); });
+      " 2>/dev/null || true
     else
       echo "✅ All stories complete despite exit code — continuing"
     fi
