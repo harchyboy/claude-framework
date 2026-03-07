@@ -15,7 +15,8 @@
 #   --skip-preflight    Skip PRD validation
 #   --no-cost           Disable cost tracking
 #   --timeout <min>     Per-iteration timeout in minutes (default: 30)
-#   --telemetry         Write structured JSON logs to agent_logs/ralph-telemetry.jsonl
+#   --telemetry         Send telemetry events to Hartz Command API
+#   --telemetry-url <u> Hartz Command server URL (default: http://localhost:3001)
 #   --verify            Run independent verification after each story (generates proof packets)
 #   --verify-runtime    Include Playwright runtime verification (requires running dev server)
 #   --dev-cmd <cmd>     Dev server start command for runtime verification
@@ -42,6 +43,8 @@ TRACK_COST=true
 TOTAL_COST=0
 ITER_TIMEOUT=30
 TELEMETRY=false
+TELEMETRY_URL="http://localhost:3001"
+RUN_ID=""
 VERIFY=false
 VERIFY_RUNTIME=false
 DEV_CMD=""
@@ -51,7 +54,6 @@ AUTO_PR=false
 PR_THRESHOLD="0.9"
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
-TELEMETRY_FILE="agent_logs/ralph-telemetry.jsonl"
 
 # Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -73,6 +75,7 @@ while [[ $# -gt 0 ]]; do
     --no-cost)       TRACK_COST=false ;;
     --timeout)       ITER_TIMEOUT="$2"; shift ;;
     --telemetry)     TELEMETRY=true ;;
+    --telemetry-url) TELEMETRY_URL="$2"; shift ;;
     --verify)        VERIFY=true ;;
     --verify-runtime) VERIFY_RUNTIME=true; VERIFY=true ;;
     --dev-cmd)       DEV_CMD="$2"; shift ;;
@@ -100,36 +103,137 @@ count_pending() {
   " 2>/dev/null || echo "0"
 }
 
-# ─── Helper: emit telemetry event ────────────────────────────────────────────
+# ─── Helper: build JSON object from key=value pairs ──────────────────────────
 
-emit_telemetry() {
-  if [[ "$TELEMETRY" != "true" ]]; then return; fi
-
-  local event_type="$1"
-  shift
-
-  # Remaining args are key=value pairs
+build_json() {
   local fields=""
   for kv in "$@"; do
     local key="${kv%%=*}"
     local val="${kv#*=}"
-    # Escape quotes in values
     val="${val//\"/\\\"}"
     if [[ -n "$fields" ]]; then fields="$fields, "; fi
-    # Auto-detect numbers vs strings
     if [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
       fields="$fields\"$key\": $val"
-    elif [[ "$val" == "true" || "$val" == "false" ]]; then
+    elif [[ "$val" == "true" || "$val" == "false" || "$val" == "null" ]]; then
       fields="$fields\"$key\": $val"
     else
       fields="$fields\"$key\": \"$val\""
     fi
   done
+  echo "{$fields}"
+}
 
-  local timestamp
-  timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+# ─── Helper: emit telemetry event via HTTP POST to Command API ───────────────
 
-  echo "{\"timestamp\": \"$timestamp\", \"event\": \"$event_type\", $fields}" >> "$TELEMETRY_FILE"
+emit_ralph_event() {
+  if [[ "$TELEMETRY" != "true" ]]; then return; fi
+
+  local event_type="$1"
+  shift
+
+  case "$event_type" in
+    session_start)
+      local json
+      json=$(build_json \
+        "prd_path=${PRD_DIR}" \
+        "branch_name=$(git branch --show-current 2>/dev/null || echo unknown)" \
+        "model=${MODEL_OVERRIDE:-claude-sonnet-4-6}" \
+        "total_stories=$(node -e "const p=JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json','utf8'));console.log(p.userStories.length)" 2>/dev/null || echo 0)" \
+        "config=$(echo "{}" | sed 's/"/\\"/g')" \
+        "$@")
+      local response
+      response=$(curl -s --connect-timeout 2 --max-time 5 \
+        -X POST "${TELEMETRY_URL}/api/ralph/runs" \
+        -H "Content-Type: application/json" \
+        -d "$json" 2>/dev/null) || { echo "  ⚠️  Telemetry: failed to create run" >&2; return; }
+      RUN_ID=$(echo "$response" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.parse(d).id)}catch{}})" 2>/dev/null || echo "")
+      if [[ -n "$RUN_ID" ]]; then
+        echo "  📡 Telemetry: run created (id=$RUN_ID)"
+      fi
+      ;;
+
+    iteration_start)
+      if [[ -z "$RUN_ID" ]]; then return; fi
+      local json
+      json=$(build_json \
+        "story_id=${STORY_ID:-unknown}" \
+        "iteration_number=${ITERATION:-0}" \
+        "$@")
+      local response
+      response=$(curl -s --connect-timeout 2 --max-time 5 \
+        -X POST "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}/iterations" \
+        -H "Content-Type: application/json" \
+        -d "$json" 2>/dev/null) || { echo "  ⚠️  Telemetry: failed to create iteration" >&2; return; }
+      ITERATION_ID=$(echo "$response" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.parse(d).id)}catch{}})" 2>/dev/null || echo "")
+      ;;
+
+    iteration_end)
+      if [[ -z "$RUN_ID" || -z "$ITERATION_ID" ]]; then return; fi
+      local json
+      json=$(build_json \
+        "status=${PREV_RESULT:-unknown}" \
+        "ended_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        "duration_seconds=${ITER_WALL_SECS:-0}" \
+        "$@")
+      curl -s --connect-timeout 2 --max-time 5 \
+        -X PUT "${TELEMETRY_URL}/api/ralph/iterations/${ITERATION_ID}" \
+        -H "Content-Type: application/json" \
+        -d "$json" 2>/dev/null || true
+      # Also update run counts
+      local run_json
+      run_json=$(build_json \
+        "completed_stories=${STORIES_COMPLETED:-0}" \
+        "$@")
+      curl -s --connect-timeout 2 --max-time 5 \
+        -X PUT "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}" \
+        -H "Content-Type: application/json" \
+        -d "$run_json" 2>/dev/null || true
+      ITERATION_ID=""
+      ;;
+
+    stuck_detected)
+      if [[ -z "$RUN_ID" || -z "$ITERATION_ID" ]]; then return; fi
+      local json
+      json=$(build_json \
+        "status=stuck" \
+        "ended_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        "error_message=Failed ${CONSECUTIVE_SAME} consecutive attempts" \
+        "$@")
+      curl -s --connect-timeout 2 --max-time 5 \
+        -X PUT "${TELEMETRY_URL}/api/ralph/iterations/${ITERATION_ID}" \
+        -H "Content-Type: application/json" \
+        -d "$json" 2>/dev/null || true
+      ITERATION_ID=""
+      ;;
+
+    session_end)
+      if [[ -z "$RUN_ID" ]]; then return; fi
+      local json
+      json=$(build_json \
+        "status=completed" \
+        "ended_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        "completed_stories=${STORIES_COMPLETED:-0}" \
+        "stuck_stories=$(node -e "const p=JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json','utf8'));console.log(p.userStories.filter(s=>s.stuck).length)" 2>/dev/null || echo 0)" \
+        "$@")
+      curl -s --connect-timeout 2 --max-time 5 \
+        -X PUT "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}" \
+        -H "Content-Type: application/json" \
+        -d "$json" 2>/dev/null || true
+      echo "  📡 Telemetry: run completed (id=$RUN_ID)"
+      ;;
+
+    *)
+      # Generic event — POST as-is to runs endpoint (fire-and-forget)
+      if [[ -n "$RUN_ID" ]]; then
+        local json
+        json=$(build_json "event=$event_type" "$@")
+        curl -s --connect-timeout 2 --max-time 5 \
+          -X PUT "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}" \
+          -H "Content-Type: application/json" \
+          -d "$json" 2>/dev/null || true
+      fi
+      ;;
+  esac
 }
 
 # ─── Helper: pick next story ID from PRD ────────────────────────────────────
@@ -184,22 +288,17 @@ merge_worktree() {
     if git merge "$branch_name" --no-edit 2>/dev/null; then
       echo "  ✅ Merge successful"
     else
-      # Auto-resolve common conflicts: PROGRESS.md, prd.json, package-lock.json
+      # Auto-resolve conflicts by taking the worktree (theirs) version.
+      # Worktree branches contain the latest story work — safe to prefer.
       local conflicted
       conflicted=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
-      local auto_resolvable=true
-      for f in $conflicted; do
-        case "$f" in
-          PROGRESS.md|*/prd.json|package-lock.json)
-            git checkout --theirs "$f" 2>/dev/null && git add "$f" 2>/dev/null
-            echo "  🔧 Auto-resolved conflict in $f (took worktree version)"
-            ;;
-          *)
-            auto_resolvable=false
-            ;;
-        esac
-      done
-      if [[ "$auto_resolvable" == true ]] && git commit --no-edit 2>/dev/null; then
+      if [[ -n "$conflicted" ]]; then
+        for f in $conflicted; do
+          git checkout --theirs "$f" 2>/dev/null && git add "$f" 2>/dev/null
+          echo "  🔧 Auto-resolved conflict in $f (took worktree version)"
+        done
+      fi
+      if git commit --no-edit 2>/dev/null; then
         echo "  ✅ Merge successful (with auto-resolved conflicts)"
       else
         echo "  ⚠️  Merge conflict — keeping worktree branch for manual resolution"
@@ -328,7 +427,7 @@ EOF
   }
 
   echo "  🔗 PR created: $pr_url"
-  emit_telemetry "auto_pr_created" \
+  emit_ralph_event "auto_pr_created" \
     "story_id=$story_id" \
     "confidence=$confidence" \
     "pr_url=$pr_url" \
@@ -508,7 +607,7 @@ echo "   Max iterations: $MAX_ITERATIONS"
 echo "   Iteration timeout: ${ITER_TIMEOUT} minutes"
 echo "   Quality gate: $QUALITY_GATE"
 echo "   Review: $REVIEW"
-echo "   Telemetry: $TELEMETRY"
+echo "   Telemetry: $TELEMETRY (url: $TELEMETRY_URL)"
 echo "   Verification: $VERIFY"
 echo "   Docker: $USE_DOCKER"
 echo "   Auto-PR: $AUTO_PR (threshold: $PR_THRESHOLD)"
@@ -516,12 +615,7 @@ echo "   Worktrees: $WORKTREE_DIR"
 echo "   PRD: $PRD_DIR"
 echo ""
 
-emit_telemetry "session_start" \
-  "prd=$PRD_DIR" \
-  "max_iterations=$MAX_ITERATIONS" \
-  "timeout_min=$ITER_TIMEOUT" \
-  "quality_gate=$QUALITY_GATE" \
-  "model=${MODEL_OVERRIDE:-claude-sonnet-4-6}"
+emit_ralph_event "session_start"
 
 ITERATION=0
 STORIES_COMPLETED=0
@@ -558,11 +652,6 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   echo "  $(date '+%Y-%m-%d %H:%M:%S') (timeout: ${ITER_TIMEOUT}min)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  emit_telemetry "iteration_start" \
-    "iteration=$ITERATION" \
-    "stories_remaining=$remaining" \
-    "total_cost=$TOTAL_COST"
-
   # Sync with remote
   git pull origin "$(git branch --show-current)" --rebase 2>/dev/null || true
 
@@ -586,7 +675,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     echo "  🚨 STUCK DETECTED: $STORY_ID has failed $CONSECUTIVE_SAME consecutive times"
     echo "  🚨 Last failure reason logged below. Stopping to avoid wasting resources."
     echo ""
-    emit_telemetry "stuck_detected" "story_id=$STORY_ID" "consecutive_failures=$CONSECUTIVE_SAME"
+    emit_ralph_event "stuck_detected" "story_id=$STORY_ID" "consecutive_failures=$CONSECUTIVE_SAME"
 
     # Write a stuck report for humans
     STUCK_FILE="${PRD_DIR}/STUCK-${STORY_ID}.md"
@@ -626,6 +715,8 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     continue
   fi
   echo "  📌 Target story: $STORY_ID"
+
+  emit_ralph_event "iteration_start"
 
   WORKTREE_PATH=""
   if git worktree list > /dev/null 2>&1; then
@@ -730,7 +821,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   if [[ -n "$WORKTREE_PATH" ]]; then
     merge_worktree "$STORY_ID" || {
       echo "  ⚠️  Worktree merge failed — manual resolution needed for $STORY_ID"
-      emit_telemetry "worktree_merge_failed" "story_id=$STORY_ID" "iteration=$ITERATION"
+      emit_ralph_event "worktree_merge_failed" "story_id=$STORY_ID" "iteration=$ITERATION"
     }
   fi
 
@@ -759,13 +850,6 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   # Compute iteration wall time
   ITER_END_TIME=$(date +%s)
   ITER_WALL_SECS=$(( ITER_END_TIME - ITER_START ))
-
-  emit_telemetry "claude_completed" \
-    "iteration=$ITERATION" \
-    "wall_time_secs=$ITER_WALL_SECS" \
-    "timed_out=$TIMED_OUT" \
-    "model=$MODEL" \
-    "cost=${ITER_COST:-0}"
 
   # Quality gate
   GATE_RESULT="skipped"
@@ -839,7 +923,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       echo "  ⚠️  Verification script failed"
     fi
 
-    emit_telemetry "verification" \
+    emit_ralph_event "verification" \
       "iteration=$ITERATION" \
       "story_id=$COMPLETED_STORY_ID" \
       "result=$VERIFY_RESULT" \
@@ -854,7 +938,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       create_auto_pr "$COMPLETED_STORY_ID" "${PRD_DIR}/prd.json" "$VERIFY_CONFIDENCE" || true
     else
       echo "  ℹ️  Confidence $VERIFY_CONFIDENCE < $PR_THRESHOLD — needs human review"
-      emit_telemetry "auto_pr_skipped" \
+      emit_ralph_event "auto_pr_skipped" \
         "story_id=$COMPLETED_STORY_ID" \
         "confidence=$VERIFY_CONFIDENCE" \
         "threshold=$PR_THRESHOLD" \
@@ -865,15 +949,11 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   # Count files changed in this iteration
   FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo "0")
 
-  emit_telemetry "iteration_end" \
-    "iteration=$ITERATION" \
-    "wall_time_secs=$ITER_WALL_SECS" \
+  emit_ralph_event "iteration_end" \
+    "exit_code=$CLAUDE_EXIT" \
     "quality_gate=$GATE_RESULT" \
-    "verification=$VERIFY_RESULT" \
-    "verify_confidence=$VERIFY_CONFIDENCE" \
     "stories_completed=$STORIES_THIS_ITER" \
     "stories_remaining=$new_remaining" \
-    "files_changed=$FILES_CHANGED" \
     "total_cost=$TOTAL_COST"
 
   # Track for next iteration's context injection
@@ -898,12 +978,7 @@ END_TIME=$(date +%s)
 ELAPSED=$(( (END_TIME - START_TIME) / 60 ))
 
 FINAL_REMAINING=$(count_pending "${PRD_DIR}/prd.json")
-emit_telemetry "session_end" \
-  "iterations=$ITERATION" \
-  "elapsed_min=$ELAPSED" \
-  "total_cost=$TOTAL_COST" \
-  "stories_remaining=$FINAL_REMAINING" \
-  "prd=$PRD_DIR"
+emit_ralph_event "session_end"
 
 echo ""
 echo "═══════════════════════════════════════"
