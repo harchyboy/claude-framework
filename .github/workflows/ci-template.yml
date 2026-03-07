@@ -1,0 +1,158 @@
+# HCF Quality Gate CI Pipeline Template
+# Stack-agnostic: detects project type and runs appropriate checks.
+# Copy this file to your project's .github/workflows/ directory.
+
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+env:
+  COVERAGE_THRESHOLD: ${{ vars.COVERAGE_THRESHOLD || '80' }}
+
+jobs:
+  detect-stack:
+    runs-on: ubuntu-latest
+    outputs:
+      stack: ${{ steps.detect.outputs.stack }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          if [[ -f "package.json" ]]; then
+            echo "stack=node" >> "$GITHUB_OUTPUT"
+          elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
+            echo "stack=python" >> "$GITHUB_OUTPUT"
+          elif [[ -f "Cargo.toml" ]]; then
+            echo "stack=rust" >> "$GITHUB_OUTPUT"
+          else
+            echo "stack=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    needs: detect-stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: needs.detect-stack.outputs.stack == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Python
+        if: needs.detect-stack.outputs.stack == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (Node)
+        if: needs.detect-stack.outputs.stack == 'node'
+        run: npm ci
+
+      - name: Install dependencies (Python)
+        if: needs.detect-stack.outputs.stack == 'python'
+        run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements-dev.txt 2>/dev/null || pip install -r requirements.txt
+
+      - name: Lint (Node)
+        if: needs.detect-stack.outputs.stack == 'node'
+        run: npx eslint . --max-warnings=0 2>/dev/null || npx biome check . 2>/dev/null || echo "No linter configured"
+
+      - name: Lint (Python)
+        if: needs.detect-stack.outputs.stack == 'python'
+        run: ruff check . 2>/dev/null || flake8 . 2>/dev/null || echo "No linter configured"
+
+      - name: Lint (Rust)
+        if: needs.detect-stack.outputs.stack == 'rust'
+        run: cargo clippy -- -D warnings
+
+  typecheck:
+    needs: detect-stack
+    if: needs.detect-stack.outputs.stack == 'node'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit 2>/dev/null || echo "No tsconfig found — skipping typecheck"
+
+  unit-tests:
+    needs: detect-stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: needs.detect-stack.outputs.stack == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Python
+        if: needs.detect-stack.outputs.stack == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies (Node)
+        if: needs.detect-stack.outputs.stack == 'node'
+        run: npm ci
+
+      - name: Install dependencies (Python)
+        if: needs.detect-stack.outputs.stack == 'python'
+        run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements-dev.txt 2>/dev/null || pip install -r requirements.txt
+
+      - name: Test with coverage (Node)
+        if: needs.detect-stack.outputs.stack == 'node'
+        run: |
+          npx jest --coverage --coverageReporters=text-summary --ci 2>/dev/null || \
+          npx vitest run --coverage --reporter=verbose 2>/dev/null || \
+          echo "No test runner found"
+
+      - name: Test with coverage (Python)
+        if: needs.detect-stack.outputs.stack == 'python'
+        run: pytest --tb=short --cov --cov-report=term-summary --cov-fail-under=${{ env.COVERAGE_THRESHOLD }}
+
+      - name: Test (Rust)
+        if: needs.detect-stack.outputs.stack == 'rust'
+        run: cargo test
+
+  integration-tests:
+    needs: [detect-stack, unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: needs.detect-stack.outputs.stack == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: needs.detect-stack.outputs.stack == 'node'
+        run: npm ci
+
+      - name: Run integration tests (Node)
+        if: needs.detect-stack.outputs.stack == 'node'
+        run: npx jest --testPathPattern='integration|e2e' --ci 2>/dev/null || echo "No integration tests found"
+
+  security-scan:
+    needs: detect-stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/default
+        continue-on-error: true

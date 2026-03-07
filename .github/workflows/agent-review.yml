@@ -1,0 +1,66 @@
+# HCF Agent Review Pipeline
+# Triggers automated quality + adversarial + security review on PRs.
+# Requires: ANTHROPIC_API_KEY repository secret.
+
+name: Agent Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  quality-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Quality Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the Quality Reviewer. Read .claude/agents/quality-reviewer.md for your full instructions.
+            Review all changed files in this PR.
+            Follow the output format specified in your agent definition.
+            You must provide at least 1 substantive finding.
+          timeout_minutes: 10
+
+  adversarial-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Adversarial Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the Adversarial Reviewer. Read .claude/agents/adversarial-reviewer.md for your full instructions.
+            Your job is to find problems. A review with zero findings is a failed review.
+            You MUST find at least 3 specific issues with file paths, line numbers, and proposed fixes.
+            Review all changed files in this PR.
+          timeout_minutes: 10
+
+  security-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Security Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the Security Reviewer. Read .claude/agents/security-reviewer.md for your full instructions.
+            Check all changed files for OWASP Top 10 vulnerabilities, auth issues, injection risks, and secrets.
+            Flag any critical items immediately.
+            Review all changed files in this PR.
+          timeout_minutes: 10
