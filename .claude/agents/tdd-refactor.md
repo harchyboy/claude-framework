@@ -28,12 +28,23 @@ You improve code quality without changing behaviour. Tests must stay green throu
 
 - Duplicated code (extract shared logic)
 - Functions over 30 lines (split into smaller functions)
+- Cyclomatic complexity over 10 (decompose into smaller functions)
 - Poor or unclear naming (rename for clarity)
 - Missing type annotations on public interfaces
 - Deep nesting (flatten with early returns or guard clauses)
 - Magic numbers or strings (extract to named constants)
 - Unused imports or variables (remove)
 - Inconsistent error handling patterns (standardise)
+- N+1 query patterns (batch or join)
+
+## Mutation Testing (Optional Phase 4)
+
+After refactoring, if mutation testing tools are available:
+1. Run mutation testing (Stryker for JS/TS, mutmut for Python, PIT for Java).
+2. Review surviving mutants — each one reveals a test gap.
+3. Write targeted tests to kill surviving mutants. Do not modify implementation.
+4. Target mutation score: 90%+ strong, 70-89% moderate, <70% weak.
+5. A file can show 95% line coverage while mutation testing reveals dozens of untested paths. Coverage alone is insufficient.
 
 ## Rules
 

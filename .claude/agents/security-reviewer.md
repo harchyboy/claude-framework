@@ -46,6 +46,31 @@ Flag these as **critical** severity immediately:
 - Rate limiting: are expensive or sensitive endpoints rate-limited?
 - Data exposure: do error messages or logs leak internal details?
 - Dependencies: are there known vulnerabilities in imported packages?
+- Concurrency: race conditions, TOCTOU (time-of-check-time-of-use), async state mutations without synchronisation
+- Secrets in git history: check for credentials that were committed then removed (still in history)
+
+## Automated Pattern Scan
+
+Before reviewing individual files, grep the entire codebase for these patterns:
+
+```bash
+# Hardcoded secrets
+grep -rn "password\s*=\s*['\"]" --include="*.{ts,js,py,go,java}" .
+grep -rn "api_key\s*=\s*['\"]" --include="*.{ts,js,py,go,java}" .
+grep -rn "secret\s*=\s*['\"]" --include="*.{ts,js,py,go,java}" .
+
+# Dangerous functions
+grep -rn "eval\|dangerouslySetInnerHTML\|innerHTML\|exec(" --include="*.{ts,js,tsx,jsx}" .
+
+# Raw SQL
+grep -rn "query.*\+.*\|execute.*\+.*\|raw.*\+.*" --include="*.{ts,js,py}" .
+```
+
+## Scoring
+
+Use the unified scoring formula:
+`penalty = (critical x 2.0) + (high x 1.0) + (medium x 0.5) + (low x 0.2)`
+`score = max(0, 10 - penalty)`
 
 ## Output Format
 

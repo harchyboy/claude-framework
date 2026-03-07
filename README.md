@@ -73,20 +73,28 @@ bash .claude-framework/install.sh .
 
 | Agent | Purpose | Tools |
 |-------|---------|-------|
-| `tdd-red` | Writes failing tests from specs (RED phase) | Read, Write, Bash, Glob, Grep |
+| `tdd-red` | Writes failing tests from specs, dual-stream ATDD support (RED) | Read, Write, Bash, Glob, Grep |
 | `tdd-green` | Minimum implementation to pass tests (GREEN) | Read, Write, Bash, Glob, Grep |
-| `tdd-refactor` | Improves code quality, reverts on failure | Read, Write, Edit, Bash, Glob, Grep |
-| `quality-reviewer` | SOLID, DRY, complexity, coverage gaps | Read, Glob, Grep, Bash |
-| `adversarial-reviewer` | 3+ specific issues required per review | Read, Glob, Grep, Bash |
-| `security-reviewer` | OWASP Top 10, auth, injection, secrets | Read, Glob, Grep, Bash |
+| `tdd-refactor` | Improves code + optional mutation testing (REFACTOR) | Read, Write, Edit, Bash, Glob, Grep |
+| `quality-reviewer` | 9-dimension quality scoring (PASS/CONCERNS/FAIL) | Read, Glob, Grep, Bash |
+| `adversarial-reviewer` | 3+ specific issues, verification protocol | Read, Glob, Grep, Bash |
+| `security-reviewer` | OWASP Top 10, automated pattern scan, scoring | Read, Glob, Grep, Bash |
+| `spec-guardian` | Detects implementation leakage in acceptance specs | Read, Glob, Grep |
+| `architect` | Writes and reviews ADRs (MADR 4.0 format) | Read, Write, Glob, Grep, Bash |
+| `retrospective` | Weekly analysis of git, CI, blockers, rule promotion | Read, Glob, Grep, Bash |
+| `codebase-auditor` | 9-dimension parallel audit orchestrator | Read, Glob, Grep, Bash, Agent |
 
 ### TDD Pipeline
 
 ```
-Spec → [tdd-red] → Failing Tests → [tdd-green] → Passing Code → [tdd-refactor] → Clean Code
+Spec → [spec-guardian] → Clean Specs → [tdd-red] → Failing Tests → [tdd-green] → Passing Code → [tdd-refactor] → Clean Code + Mutation Score
 ```
 
-Each agent runs in an isolated context window. The red agent cannot see implementation. The green agent cannot modify tests. This prevents the LLM from cheating by reverse-engineering tests from code.
+Each agent runs in an isolated context window. The red agent cannot see implementation. The green agent cannot modify tests. This prevents the LLM from cheating by reverse-engineering tests from code. The spec guardian ensures acceptance tests use domain language only — no implementation leakage.
+
+### Quality Scoring
+
+Reviews use a numeric scoring formula: `score = 100 - (20 x critical) - (10 x warning) - (2 x suggestion)`. Scores below 70 block merge. Audits use: `dimension_score = max(0, 10 - penalty)` across 9 dimensions.
 
 ---
 
@@ -97,6 +105,7 @@ Each agent runs in an isolated context window. The red agent cannot see implemen
 | `auto-lint.sh` | PostToolUse (Edit) | Runs prettier (JS/TS) or ruff (Python) silently |
 | `pre-pr-gate.sh` | PreToolUse (PR creation) | Blocks if tests fail, coverage < threshold, or lint errors |
 | `pre-commit-gate.sh` | PreToolUse (git commit) | Validates conventional commit format with ticket ID |
+| `pre-pr-adr-check.sh` | PreToolUse (PR creation) | Blocks PRs touching 3+ directories without ADR |
 | `session-end.sh` | Stop | Writes structured handoff with belief statements |
 
 ### Pre-PR Gate
