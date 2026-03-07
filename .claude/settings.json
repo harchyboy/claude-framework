@@ -32,6 +32,24 @@
             "command": "bash .claude/hooks/pre-tool-use.sh"
           }
         ]
+      },
+      {
+        "matcher": "mcp__github__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-pr-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-commit-gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -50,6 +68,15 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/post-tool-use.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/auto-lint.sh"
           }
         ]
       }
@@ -143,6 +170,15 @@
           {
             "type": "command",
             "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/stop.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/session-end.sh"
           }
         ]
       }
