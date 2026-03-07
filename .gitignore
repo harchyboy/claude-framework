@@ -6,3 +6,4 @@ current_tasks/*.txt
 .DS_Store
 node_modules/
 .claude/settings.json.bak
+.mcp.json
