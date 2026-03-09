@@ -68,3 +68,15 @@ Each story MUST be completable in ONE Ralph loop iteration (~10 min AI work).
 
 Save to: `scripts/ralph-moss/prds/[feature-name]/prd.json`
 Also create: `scripts/ralph-moss/prds/[feature-name]/AGENT_PROMPT.md` with project context.
+
+## After PRD is written
+
+Once the PRD is saved and the user is ready to start Ralph, suggest:
+
+```
+Ready to run Ralph. While it works, you can monitor progress from this session:
+  /loop 5m /babysit
+```
+
+This starts a lightweight pulse check every 5 minutes that reports only what
+changes or needs attention (stuck agents, review queue items, failing CI).

@@ -68,6 +68,8 @@ Repo:            [REPLACE]
 | Capture learnings | `/compound` |
 | Recover after /clear | `session-catchup.sh` |
 | Overnight autonomous dev | `hartz-land/start-all.sh --verify` |
+| Monitor autonomous runs | `/loop 5m /babysit` |
+| Watch specific PR checks | `/loop 5m gh pr checks <number>` |
 | Morning review | `hartz-land/daily-digest.sh` |
 
 ## REFERENCE DOCS (read on demand, not every turn)

@@ -68,6 +68,21 @@ bash scripts/hartz-land/monitor.sh --watch
 bash scripts/hartz-land/monitor.sh --json
 ```
 
+### Monitor from Claude Code (recommended for interactive sessions)
+```bash
+# Lightweight pulse check every 5 minutes — reports only what changed
+/loop 5m /babysit
+
+# Full status briefing every 10 minutes
+/loop 10m /status
+
+# Watch a specific PR's CI checks
+/loop 5m gh pr checks 42
+```
+
+`/babysit` is purpose-built for `/loop` — it uses a compact, exception-based
+format that stays quiet when everything is healthy.
+
 ### Morning review
 ```bash
 # Daily digest of overnight activity

@@ -52,6 +52,15 @@ Lead synthesises into a P1/P2/P3 report before any merge.
 - The task affects 3+ files simultaneously
 - The task involves a new API integration or adapter
 
+## Monitoring autonomous runs
+
+When routing to Ralph (feature or bug with PRD), suggest monitoring after handoff:
+
+```
+Ralph is running. Monitor from this session:
+  /loop 5m /babysit
+```
+
 ## Quick tasks (no PRD needed)
 
 If the task is clearly completable in a single Claude Code session (<10 min, single file):

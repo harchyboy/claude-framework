@@ -86,6 +86,20 @@ bash scripts/hartz-land/review-queue.sh     # approve/reject
 
 See `docs/HARTZ-LAND-GUIDE.md` for full setup.
 
+### Monitor from Claude Code with /loop
+
+While agents run autonomously, use `/loop` + `/babysit` to get periodic status
+updates right in your Claude Code session:
+
+```bash
+/loop 5m /babysit              # Pulse check every 5 minutes
+/loop 10m /status              # Full status briefing every 10 minutes
+/loop 5m gh pr checks <number> # Watch a specific PR's CI status
+```
+
+`/babysit` is a lightweight monitor designed for `/loop` — it reports by
+exception (only what changed or needs attention) to avoid flooding your session.
+
 ---
 
 ## PRD Format
