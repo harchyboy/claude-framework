@@ -1,7 +1,4 @@
 {
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
   "hooks": {
     "SessionStart": [
       {
@@ -9,7 +6,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/session-start.sh"
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/session_start.py\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/session_end.py\""
           }
         ]
       }
@@ -20,43 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/pre_tool_use.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/pre-tool-use.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__github__create_pull_request",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/pre-pr-gate.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__github__create_pull_request",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/pre-pr-adr-check.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/pre-commit-gate.sh"
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/pre_tool_use.py\""
           }
         ]
       }
@@ -67,85 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/post_tool_use.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/post-tool-use.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/auto-lint.sh"
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/permission_request.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/permission-request.sh"
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/subagent_start.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/subagent-start.sh"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/pre_compact.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/pre-compact.sh"
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/post_tool_use.py\""
           }
         ]
       }
@@ -156,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/post_tool_use_failure.py\""
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/post_tool_use_failure.py\""
           }
         ]
       }
@@ -167,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/notification.py\""
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/notification.py\""
           }
         ]
       }
@@ -178,16 +72,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/stop.py\""
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/stop.py\""
           }
         ]
-      },
+      }
+    ],
+    "SubagentStart": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/session-end.sh"
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/subagent_start.py\""
           }
         ]
       }
@@ -198,7 +94,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/subagent_stop.py\""
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/subagent_stop.py\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/pre_compact.py\""
           }
         ]
       }
@@ -209,7 +116,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/craig/Documents/Projects/hartz-command/scripts/hooks/user_prompt_submit.py\""
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/user_prompt_submit.py\""
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/permission_request.py\""
           }
         ]
       }

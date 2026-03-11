@@ -6,11 +6,25 @@ then findings are synthesised into a single P1/P2/P3 report.
 ## Usage
 
 ```
-/review                    → Full review (all relevant agents)
+/review                    → Smart-filtered review (agents matched to changed files)
+/review --full             → Full review (all agents, no filtering)
 /review security           → Security-only review
 /review typescript         → TypeScript-only review
 /review [scope]            → Review specific file or directory
 ```
+
+## Composable flags
+
+Before processing $ARGUMENTS, parse composable flags per `.claude/docs/composable-flags.md`.
+Strip recognized flags (--readonly, --concise, --lean, --seq, --local and their short forms)
+from $ARGUMENTS before treating the remainder as this command's input.
+
+Apply active flags throughout:
+- --readonly: skip all file writes and write-capable agent spawns
+- --concise: limit output to 20 lines max
+- --lean: use haiku for subagents, minimize tool calls
+- --seq: execute agents sequentially, not in parallel
+- --local: route eligible subtasks to Ollama, fall back to haiku if unavailable
 
 ## What happens
 
@@ -29,22 +43,67 @@ then findings are synthesised into a single P1/P2/P3 report.
 8. Synthesise all findings (spec + quality) into a single report
 9. Present consolidated P1/P2/P3 list with agent attribution
 
-## Agent selection logic
+## Agent selection logic — Smart filtering
 
-**Always spawn first (Phase 1):**
-- `spec-compliance-reviewer` — verifies what was built matches what was asked for
+Before spawning Phase 2 agents, determine which files changed and skip irrelevant agents.
 
-**Always spawn (Phase 2):**
-- `security-sentinel` — any code that touches auth, data, or user input
-- `typescript-reviewer` — any TypeScript changes
-- `architecture-strategist` — any structural or module-level changes
-- `error-handling-reviewer` — any feature work (loading/error/empty states, fetch handling)
+### Step 0: Detect changed files
 
-**Spawn when relevant (Phase 2):**
-- `performance-oracle` — data-heavy features, list views, database queries
-- `data-integrity-guardian` — migrations, schema changes, RLS policies
-- `accessibility-reviewer` — UI component changes
-- `test-quality-reviewer` — when tests were added, modified, or should have been added
+Run `git diff --name-only $(git merge-base HEAD main 2>/dev/null || echo HEAD~1)..HEAD` to get the list of changed files. If that fails, fall back to `git diff --name-only HEAD~1`.
+
+### File category detection
+
+Classify each changed file into one or more categories:
+
+| Category | Glob patterns |
+|----------|---------------|
+| UI | `**/*.tsx`, `**/*.jsx`, `**/*.vue`, `**/*.svelte`, `**/*.css`, `**/*.scss`, `**/components/**`, `**/pages/**`, `**/layouts/**`, `**/views/**` |
+| DB | `**/migrations/**`, `**/db/**`, `**/schema/**`, `**/seeds/**`, `**/models/**`, `**/*.sql`, `**/supabase/**` |
+| API | `**/api/**`, `**/routes/**`, `**/controllers/**`, `**/handlers/**`, `**/edge-functions/**` |
+| Test | `**/*.test.*`, `**/*.spec.*`, `**/tests/**`, `**/__tests__/**` |
+| TypeScript | `**/*.ts`, `**/*.tsx` |
+| Docs | `**/*.md`, `**/docs/**` |
+
+### Agent-to-category mapping
+
+| Agent | Runs when | Skip when |
+|-------|-----------|-----------|
+| `spec-compliance-reviewer` | ALWAYS (Phase 1) | Never skip |
+| `security-sentinel` | ANY code file changed | Only docs/config changes |
+| `typescript-reviewer` | TypeScript category has matches | No .ts/.tsx files changed |
+| `architecture-strategist` | 3+ files changed OR API/DB categories hit | Single-file cosmetic change |
+| `error-handling-reviewer` | API or UI category has matches | Only docs/config/test changes |
+| `performance-oracle` | DB or API category has matches | No DB or API files changed |
+| `data-integrity-guardian` | DB category has matches | No DB files changed |
+| `accessibility-reviewer` | UI category has matches | No UI files changed |
+| `test-quality-reviewer` | Test category has matches OR new implementation files without corresponding tests | Only docs/config changes |
+
+### Filtering procedure
+
+1. Run git diff to get the changed file list
+2. Classify each file into categories using the patterns above
+3. For each agent, check if its required categories have matches
+4. Log which agents are INCLUDED and which are SKIPPED:
+
+```
+Agent filtering (12 files changed):
+  ✓ spec-compliance-reviewer — ALWAYS
+  ✓ security-sentinel — API files changed (src/api/auth.ts)
+  ✓ typescript-reviewer — .ts files changed
+  ✗ accessibility-reviewer — SKIPPED (no UI files)
+  ✗ data-integrity-guardian — SKIPPED (no DB files)
+  ✓ architecture-strategist — 12 files changed (>3 threshold)
+  ✓ error-handling-reviewer — API files changed
+  ✗ performance-oracle — SKIPPED (no DB/API-heavy files)
+  ✓ test-quality-reviewer — test files changed
+```
+
+5. Spawn only non-skipped agents (still in ONE message for parallelism, unless --seq)
+
+### Override: --full
+
+If the user passes `--full`, skip all filtering and spawn every agent.
+Useful for pre-release reviews or when you want maximum coverage regardless of file categories.
 
 ## Parallelism rule
 

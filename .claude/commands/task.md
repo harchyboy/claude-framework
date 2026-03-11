@@ -11,6 +11,19 @@ appropriate workflow including agent teams where needed.
 /task The calendar integration is broken after the Supabase update
 ```
 
+## Composable flags
+
+Before processing $ARGUMENTS, parse composable flags per `.claude/docs/composable-flags.md`.
+Strip recognized flags (--readonly, --concise, --lean, --seq, --local, --lo and their short forms)
+from $ARGUMENTS before treating the remainder as this command's input.
+
+Apply active flags throughout:
+- --readonly: skip all file writes and write-capable agent spawns
+- --concise: limit output to 20 lines max
+- --lean: use haiku for subagents, minimize tool calls
+- --seq: execute agents sequentially, not in parallel
+- --local/--lo: use Ollama for classification and quick-task execution; fall back to haiku if unavailable
+
 ## Classification logic
 
 **Feature** -> Use `/prd` workflow
@@ -74,3 +87,35 @@ Quick task indicators:
 - "Change the colour of..."
 - "Add a console.log for debugging..."
 - "Fix the typo in..."
+
+## Local model routing
+
+Before spawning any subagent or implementing a quick task, determine the optimal execution path:
+
+```bash
+ROUTE=$(bash scripts/route-model.sh --description "$TASK_DESCRIPTION" --check-local --quiet)
+```
+
+Then act on the route:
+- `local:<model>` → execute via `bash scripts/local-model.sh --task-type <type> - <<< "$PROMPT"`
+- `haiku` → spawn subagent with `model: "haiku"`
+- `sonnet` → spawn subagent with `model: "sonnet"` (default)
+- `opus` → spawn subagent with `model: "opus"`
+
+**Always use local routing for the classification step itself** when `--local` flag is active:
+```bash
+TASK_CLASS=$(bash scripts/local-model.sh --task-type classify - <<< \
+  "Classify this task as one of: feature, bug-fix, refactor, ambiguous. Task: $TASK_DESCRIPTION. Reply with one word only.")
+```
+
+Eligible for full local execution (Ollama handles the entire task):
+- Writing test scaffolds for existing files
+- Generating JSDoc/docstrings from existing code
+- Fixing lint errors identified by the quality gate
+- Creating boilerplate file structures from templates
+
+Not eligible for local execution (always use Claude):
+- Anything touching auth, security, RLS
+- Multi-file feature implementation
+- Complex bug investigation
+- Architecture decisions

@@ -52,8 +52,13 @@ Repo:            [REPLACE]
 | Feature implementation | **Sonnet** |
 | Code review | **Sonnet** |
 | Exploration / grep | **Haiku** |
-| Test generation / docs | **Haiku** or **Local** (Ollama) |
-| Boilerplate / lint fixes | **Local** (Ollama) if available |
+| Test generation / docs | **Local** (Ollama) → **Haiku** fallback |
+| Boilerplate / lint fixes | **Local** (Ollama) → **Haiku** fallback |
+| Task classification | **Local** (Ollama) → **Haiku** fallback |
+
+> Routing is **automatic**. `ralph.sh` classifies each story and routes to Ollama when eligible.
+> Add `--local` (or `--lo`) to any command to force local routing.
+> Use `--no-local` on ralph to disable. Docs: `.claude/docs/local-model-routing.md`
 
 ## WORKFLOW GUIDE
 
@@ -62,7 +67,8 @@ Repo:            [REPLACE]
 | Feature with 3+ stories | `/prd` → `ralph.sh` |
 | Bug fix | `/bugfix` → `ralph.sh` |
 | Quick task routing | `/task` |
-| Review completed work | `/review` |
+| Research a topic | `/research` (use `--quick` / `--deep` / `--exhaustive` for depth) |
+| Review completed work | `/review` (smart-filtered) or `/review --full` |
 | Verify story actually works | `/verify` |
 | Debug competing hypotheses | Agent Teams, Debate pattern |
 | Capture learnings | `/compound` |
@@ -71,9 +77,11 @@ Repo:            [REPLACE]
 | Monitor autonomous runs | `/loop 5m /babysit` |
 | Watch specific PR checks | `/loop 5m gh pr checks <number>` |
 | Morning review | `hartz-land/daily-digest.sh` |
+| Cheap exploration mode | Any command with `--lean --readonly` flags |
 
 ## REFERENCE DOCS (read on demand, not every turn)
 
+- Composable flags (--readonly, --concise, --lean, --seq): `.claude/docs/composable-flags.md`
 - Quality gates & review scoring: `.claude/docs/quality-gates.md`
 - External memory protocol: `.claude/docs/external-memory.md`
 - Agent team patterns: `.claude/docs/agent-teams.md`

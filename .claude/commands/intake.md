@@ -11,6 +11,19 @@ right workflow automatically.
 /intake [paste feedback text directly]
 ```
 
+## Composable flags
+
+Before processing $ARGUMENTS, parse composable flags per `.claude/docs/composable-flags.md`.
+Strip recognized flags (--readonly, --concise, --lean, --seq, --local and their short forms)
+from $ARGUMENTS before treating the remainder as this command's input.
+
+Apply active flags throughout:
+- --readonly: skip all file writes and write-capable agent spawns
+- --concise: limit output to 20 lines max
+- --lean: use haiku for subagents, minimize tool calls
+- --seq: execute agents sequentially, not in parallel
+- --local: route eligible subtasks to Ollama, fall back to haiku if unavailable
+
 ## Recommended format: PDF
 
 PDF is the best format because Claude can see both text AND images.

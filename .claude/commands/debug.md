@@ -12,6 +12,19 @@ ranked list of causes with evidence.
 /debug Dashboard metrics show incorrect totals after timezone change
 ```
 
+## Composable flags
+
+Before processing $ARGUMENTS, parse composable flags per `.claude/docs/composable-flags.md`.
+Strip recognized flags (--readonly, --concise, --lean, --seq, --local and their short forms)
+from $ARGUMENTS before treating the remainder as this command's input.
+
+Apply active flags throughout:
+- --readonly: skip all file writes and write-capable agent spawns
+- --concise: limit output to 20 lines max
+- --lean: use haiku for subagents, minimize tool calls
+- --seq: execute agents sequentially, not in parallel
+- --local: route eligible subtasks to Ollama, fall back to haiku if unavailable
+
 ## What to do
 
 ### Step 1: Gather context

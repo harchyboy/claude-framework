@@ -24,6 +24,8 @@
 #   --docker            Run Claude inside Docker container with network isolation
 #   --auto-pr           Auto-create GitHub PR when verification passes (confidence >= 0.9)
 #   --pr-threshold <n>  Confidence threshold for auto-PR (default: 0.9)
+#   --use-local         Enable Ollama pre-generation for test/doc stories (default: on)
+#   --no-local          Disable Ollama auto-routing, always use Claude
 #   --help              Show this help
 
 set -euo pipefail
@@ -52,6 +54,7 @@ DEV_URL="http://localhost:3000"
 USE_DOCKER=false
 AUTO_PR=false
 PR_THRESHOLD="0.9"
+USE_LOCAL=true   # Auto-route local-eligible stories to Ollama when available
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
 
@@ -83,6 +86,8 @@ while [[ $# -gt 0 ]]; do
     --docker)        USE_DOCKER=true ;;
     --auto-pr)       AUTO_PR=true ;;
     --pr-threshold)  PR_THRESHOLD="$2"; shift ;;
+    --use-local)     USE_LOCAL=true ;;
+    --no-local)      USE_LOCAL=false ;;
     --help)
       sed -n '2,21p' "$0"
       exit 0
@@ -101,6 +106,146 @@ count_pending() {
     const pending = prd.userStories.filter(s => !s.passes && !s.stuck);
     console.log(pending.length);
   " 2>/dev/null || echo "0"
+}
+
+# ─── Helper: classify story type from title/description ──────────────────────
+# Returns: test-scaffold | docs | lint-fix | boilerplate | feature (default)
+
+classify_story() {
+  local title="${1:-}"
+  local desc="${2:-}"
+  local combined
+  combined=$(echo "$title $desc" | tr '[:upper:]' '[:lower:]')
+
+  if echo "$combined" | grep -qE "write test|generate test|add test|unit test|spec file|test scaffold|test for|tests for"; then
+    echo "test-scaffold"
+  elif echo "$combined" | grep -qE "jsdoc|docstring|readme|documentation|add comment|annotate|document (the|all|public)|write doc"; then
+    echo "docs"
+  elif echo "$combined" | grep -qE "^lint|fix lint|fix warning|unused import|format (the|all|files)|prettier|eslint fix"; then
+    echo "lint-fix"
+  elif echo "$combined" | grep -qE "boilerplate|scaffold|template|stub|placeholder|crud (for|component|service)"; then
+    echo "boilerplate"
+  else
+    echo "feature"
+  fi
+}
+
+# ─── Helper: run local pre-generation for eligible stories ───────────────────
+# Writes files directly, returns 0 if successful and quality gate passes
+
+run_local_prereq() {
+  local story_id="$1"
+  local story_title="$2"
+  local story_type="$3"
+  local work_dir="${WORKTREE_PATH:-$(pwd)}"
+  local scripts_dir
+
+  # Find scripts dir relative to repo root
+  if [[ -f "scripts/local-model.sh" ]]; then
+    scripts_dir="scripts"
+  elif [[ -f "../scripts/local-model.sh" ]]; then
+    scripts_dir="../scripts"
+  else
+    echo "  ⚠️  local-model.sh not found — skipping local pre-generation" >&2
+    return 1
+  fi
+
+  # Check Ollama is reachable
+  if ! curl -sf --max-time 2 "${OLLAMA_HOST:-http://localhost:11434}/api/tags" > /dev/null 2>&1; then
+    echo "  ℹ️  Ollama not available — using Claude for $story_id" >&2
+    return 1
+  fi
+
+  echo "  🦙 Ollama available — attempting local pre-generation for $story_id ($story_type)"
+
+  local PREREQ_LOG="agent_logs/local_prereq_${story_id}.log"
+  mkdir -p agent_logs
+
+  # Build a context-rich prompt for the local model
+  local PREREQ_PROMPT
+  PREREQ_PROMPT=$(cat <<PROMPT
+You are a code generation assistant. Generate the requested output as plain code files only.
+Do not include explanations, markdown formatting, or commentary outside of code comments.
+
+Story: $story_id
+Title: $story_title
+Type: $story_type
+Task: Generate the output for this story. Write complete, working code.
+
+If generating test files: create the full test file skeleton with all describe/it blocks and import statements.
+If generating docs: write JSDoc comments or README sections as plain text/markdown.
+If generating boilerplate: write the complete skeleton file(s) with all required exports and types.
+
+Output format: For each file, start a line with "=== FILE: path/to/file.ext ===" followed by the file content.
+End each file with "=== END FILE ===".
+PROMPT
+)
+
+  # Run local model
+  local OUTPUT
+  OUTPUT=$(bash "$scripts_dir/local-model.sh" \
+    --task-type "$story_type" \
+    --timeout 90 \
+    - <<< "$PREREQ_PROMPT" 2>"$PREREQ_LOG") || {
+    echo "  ⚠️  Local model failed — falling back to Claude" >&2
+    return 1
+  }
+
+  if [[ -z "$OUTPUT" ]]; then
+    echo "  ⚠️  Local model returned empty output — falling back to Claude" >&2
+    return 1
+  fi
+
+  # Parse and write files from output
+  local FILES_WRITTEN=0
+  local CURRENT_FILE=""
+  local CONTENT_BUFFER=""
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^===\ FILE:\ (.+)\ ===$ ]]; then
+      # Write previous file if we have one
+      if [[ -n "$CURRENT_FILE" && -n "$CONTENT_BUFFER" ]]; then
+        mkdir -p "$(dirname "$CURRENT_FILE")"
+        echo "$CONTENT_BUFFER" > "$CURRENT_FILE"
+        FILES_WRITTEN=$((FILES_WRITTEN + 1))
+        echo "  📝 Written: $CURRENT_FILE"
+      fi
+      CURRENT_FILE="${BASH_REMATCH[1]}"
+      CONTENT_BUFFER=""
+    elif [[ "$line" == "=== END FILE ===" ]]; then
+      if [[ -n "$CURRENT_FILE" && -n "$CONTENT_BUFFER" ]]; then
+        mkdir -p "$(dirname "$CURRENT_FILE")"
+        echo "$CONTENT_BUFFER" > "$CURRENT_FILE"
+        FILES_WRITTEN=$((FILES_WRITTEN + 1))
+        echo "  📝 Written: $CURRENT_FILE"
+      fi
+      CURRENT_FILE=""
+      CONTENT_BUFFER=""
+    elif [[ -n "$CURRENT_FILE" ]]; then
+      CONTENT_BUFFER+="$line"$'\n'
+    fi
+  done <<< "$OUTPUT"
+
+  if [[ "$FILES_WRITTEN" -eq 0 ]]; then
+    echo "  ⚠️  Local model output had no parseable files — falling back to Claude" >&2
+    return 1
+  fi
+
+  echo "  ✅ Local pre-generation wrote $FILES_WRITTEN file(s)"
+
+  # Quick quality check: if tests exist, try running them
+  if [[ "$QUALITY_GATE" == "true" ]] && [[ -f "scripts/quality-gate.sh" ]]; then
+    echo "  🔍 Running quality gate on local-generated files..."
+    if (cd "$work_dir" && bash scripts/quality-gate.sh --skip-tests 2>&1 | tail -5); then
+      echo "  ✅ Quality gate passed — local generation accepted"
+      return 0
+    else
+      echo "  ⚠️  Quality gate failed — Claude will refine the local output"
+      return 1
+    fi
+  fi
+
+  return 0
 }
 
 # ─── Helper: build JSON object from key=value pairs ──────────────────────────
@@ -737,6 +882,40 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     MODEL="$MODEL_OVERRIDE"
   else
     MODEL="claude-sonnet-4-6"
+  fi
+
+  # ─── Local model auto-routing ────────────────────────────────────────────────
+  # For local-eligible story types, attempt Ollama pre-generation.
+  # If it succeeds and writes valid files, we skip the full Claude run.
+  # If it fails or is disabled, fall through to Claude as normal.
+
+  LOCAL_PREREQ_DONE=false
+
+  if [[ "$USE_LOCAL" == "true" ]] && [[ -z "$MODEL_OVERRIDE" ]]; then
+    # Extract story title and description from PRD
+    STORY_META=$(node -e "
+      const prd = JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+      const s = prd.userStories.find(s => s.id === '$STORY_ID');
+      if (s) console.log(JSON.stringify({ title: s.title || '', description: s.description || '' }));
+      else console.log(JSON.stringify({ title: '', description: '' }));
+    " 2>/dev/null || echo '{"title":"","description":""}')
+
+    STORY_TITLE_LOCAL=$(echo "$STORY_META" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>process.stdout.write(JSON.parse(d).title||''))" 2>/dev/null || echo "")
+    STORY_DESC_LOCAL=$(echo "$STORY_META" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>process.stdout.write(JSON.parse(d).description||''))" 2>/dev/null || echo "")
+
+    STORY_TYPE=$(classify_story "$STORY_TITLE_LOCAL" "$STORY_DESC_LOCAL")
+
+    if [[ "$STORY_TYPE" != "feature" ]]; then
+      echo "  🔀 Story classified as: $STORY_TYPE — attempting local model"
+      if run_local_prereq "$STORY_ID" "$STORY_TITLE_LOCAL" "$STORY_TYPE"; then
+        LOCAL_PREREQ_DONE=true
+        # Route model to haiku for any follow-up (cheaper than sonnet)
+        MODEL="claude-haiku-4-5-20251001"
+        echo "  💡 Local pre-generation succeeded — Claude ($MODEL) will verify and refine"
+      else
+        echo "  🔁 Local pre-generation skipped — running full Claude ($MODEL)"
+      fi
+    fi
   fi
 
   # Run Claude with timeout
