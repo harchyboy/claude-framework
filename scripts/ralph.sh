@@ -403,10 +403,15 @@ create_worktree() {
   local branch_name="ralph/${story_id}"
   local worktree_path="${WORKTREE_DIR}/${story_id}"
 
-  # Clean up if stale worktree exists
+  # Clean up if stale worktree directory exists
   if [[ -d "$worktree_path" ]]; then
     echo "  🧹 Cleaning stale worktree: $story_id" >&2
     git worktree remove "$worktree_path" --force >/dev/null 2>&1 || rm -rf "$worktree_path"
+  fi
+
+  # Clean up stale branch even if worktree directory was already removed
+  if git show-ref --verify --quiet "refs/heads/${branch_name}" 2>/dev/null; then
+    echo "  🧹 Cleaning stale branch: $branch_name" >&2
     git branch -D "$branch_name" >/dev/null 2>&1 || true
   fi
 
