@@ -26,6 +26,7 @@
 #   --pr-threshold <n>  Confidence threshold for auto-PR (default: 0.9)
 #   --hooks-dir <path>  Directory for lifecycle hook scripts (default: scripts/ralph-hooks/)
 #   --stall-timeout <m> Kill agent if no output for N minutes (default: 5, 0=disable)
+#   --no-backoff        Disable exponential backoff on story retries
 #   --use-local         Enable Ollama pre-generation for test/doc stories (default: on)
 #   --no-local          Disable Ollama auto-routing, always use Claude
 #   --help              Show this help
@@ -60,6 +61,7 @@ HOOKS_DIR="scripts/ralph-hooks/"
 USE_LOCAL=true   # Auto-route local-eligible stories to Ollama when available
 HOOK_TIMEOUT=60
 STALL_TIMEOUT=5  # Minutes of no output before killing agent (0=disabled)
+BACKOFF_ENABLED=true  # Exponential backoff on same-story retries
 STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
@@ -94,6 +96,7 @@ while [[ $# -gt 0 ]]; do
     --pr-threshold)  PR_THRESHOLD="$2"; shift ;;
     --hooks-dir)     HOOKS_DIR="$2"; shift ;;
     --stall-timeout) STALL_TIMEOUT="$2"; shift ;;
+    --no-backoff)    BACKOFF_ENABLED=false ;;
     --use-local)     USE_LOCAL=true ;;
     --no-local)      USE_LOCAL=false ;;
     --help)
@@ -382,6 +385,49 @@ start_stall_watchdog() {
       echo "STALL_KILLED" > "/tmp/ralph_stall_$$"
       break
     fi
+  done
+}
+
+# ─── Helper: calculate exponential backoff delay ─────────────────────────────
+# Formula: min(10 * 2^(fail_count-1), 300) seconds
+# Sequence: 10s, 20s, 40s, 80s, 160s, 300s, 300s...
+
+calculate_backoff() {
+  local fail_count="$1"
+  local BASE_DELAY=10
+  local MAX_BACKOFF=300
+
+  # 2^(fail_count-1) via bit shift
+  local exponent=$((fail_count - 1))
+  local power=1
+  local i
+  for ((i = 0; i < exponent; i++)); do
+    power=$((power * 2))
+  done
+
+  local delay=$((BASE_DELAY * power))
+  if [[ "$delay" -gt "$MAX_BACKOFF" ]]; then
+    delay="$MAX_BACKOFF"
+  fi
+  echo "$delay"
+}
+
+# ─── Helper: interruptible sleep for backoff ──────────────────────────────────
+# Sleeps for N seconds but exits immediately on SIGINT (Ctrl+C)
+
+BACKOFF_INTERRUPTED=false
+
+backoff_sleep() {
+  local duration="$1"
+  local elapsed=0
+  BACKOFF_INTERRUPTED=false
+
+  while [[ "$elapsed" -lt "$duration" ]] && [[ "$BACKOFF_INTERRUPTED" == "false" ]]; do
+    sleep 1 &
+    local sleep_pid=$!
+    trap 'BACKOFF_INTERRUPTED=true; kill $sleep_pid 2>/dev/null || true' INT
+    wait "$sleep_pid" 2>/dev/null || true
+    elapsed=$((elapsed + 1))
   done
 }
 
@@ -1052,6 +1098,21 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   fi
   echo "  📌 Target story: $STORY_ID"
 
+  # ─── Exponential backoff on same-story retries ─────────────────────────────
+  if [[ "$BACKOFF_ENABLED" == "true" ]] && [[ "$CONSECUTIVE_SAME" -gt 0 ]]; then
+    BACKOFF_DELAY=$(calculate_backoff "$CONSECUTIVE_SAME")
+    echo "  ⏳ Backing off ${BACKOFF_DELAY}s before retry #$((CONSECUTIVE_SAME + 1)) of $STORY_ID"
+    backoff_sleep "$BACKOFF_DELAY"
+    if [[ "$BACKOFF_INTERRUPTED" == "true" ]]; then
+      echo "  🛑 Backoff interrupted — shutting down"
+      break
+    fi
+    emit_ralph_event "backoff" \
+      "story_id=$STORY_ID" \
+      "backoff_seconds=$BACKOFF_DELAY" \
+      "retry_number=$((CONSECUTIVE_SAME + 1))"
+  fi
+
   emit_ralph_event "iteration_start"
 
   WORKTREE_PATH=""
@@ -1363,7 +1424,8 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     "quality_gate=$GATE_RESULT" \
     "stories_completed=$STORIES_THIS_ITER" \
     "stories_remaining=$new_remaining" \
-    "total_cost=$TOTAL_COST"
+    "total_cost=$TOTAL_COST" \
+    "backoff_seconds=${BACKOFF_DELAY:-0}"
 
   # Track for next iteration's context injection
   PREV_STORY_ID="$STORY_ID"

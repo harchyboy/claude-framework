@@ -7,14 +7,16 @@
 ## Current status
 
 **As of:** 2026-03-15
-**Active branch:** ralph/US-003
-**Open PRDs:** ralph-symphony-upgrades (6 stories, 3 complete)
+**Active branch:** ralph/US-004
+**Open PRDs:** ralph-symphony-upgrades (6 stories, 4 complete)
 
 ---
 
 ## What was last worked on
 
-**US-003: Activity-based stall detection** — Added `start_stall_watchdog()` function to ralph.sh. New `--stall-timeout <min>` flag (default: 5 minutes, 0=disabled). Background watchdog monitors log file mtime every 30 seconds. If no new output for stall-timeout minutes, kills agent with SIGTERM (then SIGKILL after 10s). 60-second grace period at startup prevents false stalls during agent initialization. Stall counts as failure for retry/stuck detection. Telemetry event `stall_detected` emitted with story_id and elapsed time. Watchdog cleaned up when Claude exits. 18 tests added. Existing behavior unchanged when stall timeout is 0.
+**US-004: Exponential backoff on story retries** — Added `calculate_backoff()` and `backoff_sleep()` functions to ralph.sh. New `--no-backoff` flag to disable. Delay formula: `min(10 * 2^(fail_count-1), 300)` seconds (sequence: 10s, 20s, 40s, 80s, 160s, 300s cap). Backoff only applies when retrying the same story (CONSECUTIVE_SAME > 0), not when moving to a new story. Backoff sleep is interruptible via Ctrl+C (1-second poll loop with SIGINT trap). Telemetry events emitted: `backoff` with story_id/seconds/retry_number, plus `backoff_seconds` in `iteration_end`. 22 tests added. Existing behavior unchanged when `--no-backoff` is passed.
+
+Previous: US-003 — Stall detection (start_stall_watchdog, --stall-timeout, 18 tests).
 
 Previous: US-002 — Continuation prompts (build_continuation_prompt, retry detection, 17 tests).
 
@@ -73,3 +75,4 @@ Previous: Track 3 — automation pipeline, tmux orchestration, shared memory.
 | 2026-03-15 | US-001: Workspace lifecycle hooks — run_hook(), --hooks-dir, 4 hook points, 21 tests | US-001 |
 | 2026-03-15 | US-002: Continuation prompts — build_continuation_prompt(), retry detection, token savings, 17 tests | US-002 |
 | 2026-03-15 | US-003: Stall detection — start_stall_watchdog(), --stall-timeout, log mtime monitoring, grace period, 18 tests | US-003 |
+| 2026-03-15 | US-004: Exponential backoff — calculate_backoff(), backoff_sleep(), --no-backoff, interruptible sleep, 22 tests | US-004 |
