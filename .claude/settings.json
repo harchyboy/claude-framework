@@ -31,6 +31,15 @@
             "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/pre_tool_use.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/rtk-rewrite.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [

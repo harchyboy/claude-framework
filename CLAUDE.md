@@ -79,6 +79,17 @@ Repo:            [REPLACE]
 | Morning review | `hartz-land/daily-digest.sh` |
 | Cheap exploration mode | Any command with `--lean --readonly` flags |
 
+## TOKEN COMPRESSION (RTK)
+
+RTK (Rust Token Killer) is installed as a PreToolUse hook. It automatically rewrites
+Bash commands (`git`, `ls`, `find`, `pytest`, etc.) to strip noise before output
+enters the context window. Saves 60-90% tokens on common dev commands.
+
+- Binary: `~/.local/bin/rtk.exe`
+- Hook: `.claude/hooks/rtk-rewrite.py`
+- Config: `~/AppData/Roaming/rtk/config.toml`
+- Check savings: `rtk gain`
+
 ## REFERENCE DOCS (read on demand, not every turn)
 
 - Composable flags (--readonly, --concise, --lean, --seq): `.claude/docs/composable-flags.md`
