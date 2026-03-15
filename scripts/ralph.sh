@@ -431,6 +431,110 @@ backoff_sleep() {
   done
 }
 
+# ─── Helper: collect proof packet after each iteration ────────────────────
+# Lightweight evidence collection — runs after every Claude invocation (pass or fail).
+# Saves structured JSON to agent_logs/proof-{story_id}-iter{N}.json.
+# Never fails the iteration — errors are logged and skipped.
+#
+# Usage: collect_proof_packet <story_id> <iteration> <status> <exit_code> <duration>
+# Quality gate variables (set externally): QG_TESTS_PASSED, QG_TESTS_FAILED,
+#   QG_TESTS_SKIPPED, QG_LINT_ERRORS, QG_LINT_WARNINGS, QG_BUILD_CLEAN
+
+collect_proof_packet() {
+  local story_id="$1"
+  local iteration="$2"
+  local status="$3"
+  local exit_code="$4"
+  local duration="$5"
+  local proof_file="agent_logs/proof-${story_id}-iter${iteration}.json"
+  local work_dir="${WORKTREE_PATH:-$(pwd)}"
+
+  mkdir -p agent_logs
+
+  # Collect git diff stats (lightweight)
+  local files_changed=0 lines_added=0 lines_removed=0
+  local diff_stat
+  diff_stat=$(cd "$work_dir" && git diff --stat HEAD~1 HEAD 2>/dev/null || echo "")
+  if [[ -n "$diff_stat" ]]; then
+    files_changed=$(echo "$diff_stat" | tail -1 | grep -oE '[0-9]+ file' | grep -oE '[0-9]+' || echo "0")
+    lines_added=$(echo "$diff_stat" | tail -1 | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
+    lines_removed=$(echo "$diff_stat" | tail -1 | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
+  fi
+  files_changed="${files_changed:-0}"
+  lines_added="${lines_added:-0}"
+  lines_removed="${lines_removed:-0}"
+
+  # Commit count (commits ahead of main branch)
+  local commit_count=0
+  local main_branch
+  main_branch=$(cd "$work_dir" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+  commit_count=$(cd "$work_dir" && git rev-list --count HEAD ^"$(git merge-base HEAD main 2>/dev/null || echo HEAD)" 2>/dev/null || echo "0")
+
+  # Timestamp
+  local collected_at
+  collected_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+  # Build JSON — core fields always present
+  local json_content
+  json_content=$(node -e "
+    const packet = {
+      \"story_id\": process.argv[1],
+      \"iteration\": parseInt(process.argv[2]) || 0,
+      \"status\": process.argv[3],
+      \"exit_code\": parseInt(process.argv[4]) || 0,
+      \"duration_seconds\": parseInt(process.argv[5]) || 0,
+      \"model\": process.argv[6],
+      \"files_changed\": parseInt(process.argv[7]) || 0,
+      \"lines_added\": parseInt(process.argv[8]) || 0,
+      \"lines_removed\": parseInt(process.argv[9]) || 0,
+      \"commit_count\": parseInt(process.argv[10]) || 0,
+      \"collected_at\": process.argv[11]
+    };
+
+    // Quality gate fields — only if gate ran
+    if (process.argv[12] === 'true') {
+      packet.tests_passed = parseInt(process.argv[13]) || 0;
+      packet.tests_failed = parseInt(process.argv[14]) || 0;
+      packet.tests_skipped = parseInt(process.argv[15]) || 0;
+      packet.lint_errors = parseInt(process.argv[16]) || 0;
+      packet.lint_warnings = parseInt(process.argv[17]) || 0;
+      packet.build_clean = process.argv[18] === 'true';
+    }
+
+    console.log(JSON.stringify(packet, null, 2));
+  " "$story_id" "$iteration" "$status" "$exit_code" "$duration" \
+    "${MODEL:-claude-sonnet-4-6}" \
+    "$files_changed" "$lines_added" "$lines_removed" "$commit_count" \
+    "$collected_at" \
+    "${QUALITY_GATE:-false}" \
+    "${QG_TESTS_PASSED:-0}" "${QG_TESTS_FAILED:-0}" "${QG_TESTS_SKIPPED:-0}" \
+    "${QG_LINT_ERRORS:-0}" "${QG_LINT_WARNINGS:-0}" "${QG_BUILD_CLEAN:-false}" \
+    2>/dev/null) || {
+    echo "  ⚠️  Proof packet: JSON generation failed" >&2
+    return 0
+  }
+
+  # Write proof packet (atomic: tmp then move)
+  local tmp_file="${proof_file}.tmp"
+  echo "$json_content" > "$tmp_file" && mv "$tmp_file" "$proof_file" || {
+    echo "  ⚠️  Proof packet: file write failed" >&2
+    rm -f "$tmp_file"
+    return 0
+  }
+
+  echo "  📦 Proof packet: $proof_file"
+
+  # POST to telemetry if enabled
+  if [[ "$TELEMETRY" == "true" ]] && [[ -n "${RUN_ID:-}" ]]; then
+    curl -s --connect-timeout 2 --max-time 5 \
+      -X POST "${TELEMETRY_URL}/api/ralph/proof" \
+      -H "Content-Type: application/json" \
+      -d "$json_content" 2>/dev/null || true
+  fi
+
+  return 0
+}
+
 # ─── Helper: emit telemetry event via HTTP POST to Command API ───────────────
 
 emit_ralph_event() {
@@ -1338,6 +1442,18 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       GATE_RESULT="passed"
     fi
   fi
+
+  # ─── Proof packet collection (always, pass or fail) ────────────────────
+  PROOF_STATUS="failed"
+  if [[ "$CLAUDE_EXIT" -eq 0 ]] && [[ "$GATE_RESULT" != "failed" ]]; then
+    PROOF_STATUS="passed"
+  elif [[ "$TIMED_OUT" == "true" ]]; then
+    PROOF_STATUS="timeout"
+  elif [[ "$STALL_KILLED" == "true" ]]; then
+    PROOF_STATUS="stall"
+  fi
+
+  collect_proof_packet "$STORY_ID" "$ITERATION" "$PROOF_STATUS" "$CLAUDE_EXIT" "$ITER_WALL_SECS" || true
 
   # Count new stories completed
   new_remaining=$(count_pending "${PRD_DIR}/prd.json")

@@ -7,14 +7,16 @@
 ## Current status
 
 **As of:** 2026-03-15
-**Active branch:** ralph/US-004
-**Open PRDs:** ralph-symphony-upgrades (6 stories, 4 complete)
+**Active branch:** ralph/US-005
+**Open PRDs:** ralph-symphony-upgrades (6 stories, 5 complete)
 
 ---
 
 ## What was last worked on
 
-**US-004: Exponential backoff on story retries** — Added `calculate_backoff()` and `backoff_sleep()` functions to ralph.sh. New `--no-backoff` flag to disable. Delay formula: `min(10 * 2^(fail_count-1), 300)` seconds (sequence: 10s, 20s, 40s, 80s, 160s, 300s cap). Backoff only applies when retrying the same story (CONSECUTIVE_SAME > 0), not when moving to a new story. Backoff sleep is interruptible via Ctrl+C (1-second poll loop with SIGINT trap). Telemetry events emitted: `backoff` with story_id/seconds/retry_number, plus `backoff_seconds` in `iteration_end`. 22 tests added. Existing behavior unchanged when `--no-backoff` is passed.
+**US-005: Proof packets — always collect evidence** — Added `collect_proof_packet()` function to ralph.sh. After every Claude run (pass or fail), collects structured JSON evidence to `agent_logs/proof-{story_id}-iter{N}.json`. Core fields: story_id, iteration, status (passed/failed/timeout/stall), duration_seconds, model, exit_code. Git stats: files_changed, lines_added, lines_removed (from `git diff --stat`), commit_count (via `git rev-list --count`). Quality gate fields (when gate ran): tests_passed, tests_failed, tests_skipped, lint_errors, lint_warnings, build_clean. Includes collected_at timestamp. If telemetry enabled, POSTs to `/api/ralph/proof`. Atomic file writes (tmp+rename). Errors never fail the iteration. 43 tests added.
+
+Previous: US-004 — Exponential backoff (calculate_backoff, backoff_sleep, --no-backoff, 22 tests).
 
 Previous: US-003 — Stall detection (start_stall_watchdog, --stall-timeout, 18 tests).
 
@@ -76,3 +78,4 @@ Previous: Track 3 — automation pipeline, tmux orchestration, shared memory.
 | 2026-03-15 | US-002: Continuation prompts — build_continuation_prompt(), retry detection, token savings, 17 tests | US-002 |
 | 2026-03-15 | US-003: Stall detection — start_stall_watchdog(), --stall-timeout, log mtime monitoring, grace period, 18 tests | US-003 |
 | 2026-03-15 | US-004: Exponential backoff — calculate_backoff(), backoff_sleep(), --no-backoff, interruptible sleep, 22 tests | US-004 |
+| 2026-03-15 | US-005: Proof packets — collect_proof_packet(), always-on evidence collection, git stats, quality gate fields, telemetry POST, 43 tests | US-005 |
