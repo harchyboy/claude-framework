@@ -25,6 +25,7 @@
 #   --auto-pr           Auto-create GitHub PR when verification passes (confidence >= 0.9)
 #   --pr-threshold <n>  Confidence threshold for auto-PR (default: 0.9)
 #   --hooks-dir <path>  Directory for lifecycle hook scripts (default: scripts/ralph-hooks/)
+#   --stall-timeout <m> Kill agent if no output for N minutes (default: 5, 0=disable)
 #   --use-local         Enable Ollama pre-generation for test/doc stories (default: on)
 #   --no-local          Disable Ollama auto-routing, always use Claude
 #   --help              Show this help
@@ -58,6 +59,8 @@ PR_THRESHOLD="0.9"
 HOOKS_DIR="scripts/ralph-hooks/"
 USE_LOCAL=true   # Auto-route local-eligible stories to Ollama when available
 HOOK_TIMEOUT=60
+STALL_TIMEOUT=5  # Minutes of no output before killing agent (0=disabled)
+STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
 
@@ -90,6 +93,7 @@ while [[ $# -gt 0 ]]; do
     --auto-pr)       AUTO_PR=true ;;
     --pr-threshold)  PR_THRESHOLD="$2"; shift ;;
     --hooks-dir)     HOOKS_DIR="$2"; shift ;;
+    --stall-timeout) STALL_TIMEOUT="$2"; shift ;;
     --use-local)     USE_LOCAL=true ;;
     --no-local)      USE_LOCAL=false ;;
     --help)
@@ -318,6 +322,67 @@ run_hook() {
 
   echo "  ✅ Hook ${hook_name} completed" >&2
   return 0
+}
+
+# ─── Helper: stall watchdog — kill agent if no log output for N minutes ──────
+# Runs as a background process alongside the iteration timeout watchdog.
+# Checks log file mtime every 30 seconds. If no new bytes for stall-timeout
+# minutes, kills CLAUDE_PID. Grace period prevents false stalls during startup.
+#
+# Overridable internals for testing:
+#   STALL_TIMEOUT_SECS, STALL_GRACE_SECS, STALL_CHECK_INTERVAL
+
+start_stall_watchdog() {
+  local stall_timeout_secs="${STALL_TIMEOUT_SECS:-$((STALL_TIMEOUT * 60))}"
+  local grace_secs="${STALL_GRACE_SECS:-$STALL_GRACE}"
+  local check_interval="${STALL_CHECK_INTERVAL:-30}"
+  local start_time
+  start_time=$(date +%s)
+
+  # Wait for grace period before starting checks
+  if [[ "$grace_secs" -gt 0 ]]; then
+    sleep "$grace_secs"
+  fi
+
+  while kill -0 "$CLAUDE_PID" 2>/dev/null; do
+    sleep "$check_interval"
+
+    # Check if Claude is still running after sleep
+    if ! kill -0 "$CLAUDE_PID" 2>/dev/null; then
+      break
+    fi
+
+    # Get log file last modified time
+    local last_modified
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      last_modified=$(stat -f %m "$LOG_FILE" 2>/dev/null || echo "0")
+    else
+      # Linux / MSYS / Git Bash
+      last_modified=$(stat -c %Y "$LOG_FILE" 2>/dev/null || date -r "$LOG_FILE" +%s 2>/dev/null || echo "0")
+    fi
+
+    local now
+    now=$(date +%s)
+    local idle_secs=$((now - last_modified))
+
+    if [[ "$idle_secs" -ge "$stall_timeout_secs" ]]; then
+      echo "  ⏸️  Stall detected: no output for $((idle_secs / 60)) minutes — killing agent" >> "$LOG_FILE"
+      echo "  ⏸️  Stall detected: no output for $((idle_secs / 60)) minutes — killing agent" >&2
+
+      # SIGTERM first for graceful shutdown
+      kill "$CLAUDE_PID" 2>/dev/null || true
+
+      # SIGKILL after 10 seconds if still running
+      sleep 10
+      if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+        kill -9 "$CLAUDE_PID" 2>/dev/null || true
+      fi
+
+      # Signal to the main loop that this was a stall exit
+      echo "STALL_KILLED" > "/tmp/ralph_stall_$$"
+      break
+    fi
+  done
 }
 
 # ─── Helper: emit telemetry event via HTTP POST to Command API ───────────────
@@ -880,6 +945,7 @@ echo "   Telemetry: $TELEMETRY (url: $TELEMETRY_URL)"
 echo "   Verification: $VERIFY"
 echo "   Docker: $USE_DOCKER"
 echo "   Auto-PR: $AUTO_PR (threshold: $PR_THRESHOLD)"
+echo "   Stall timeout: ${STALL_TIMEOUT} minutes (0=disabled)"
 echo "   Hooks dir: $HOOKS_DIR"
 echo "   Worktrees: $WORKTREE_DIR"
 echo "   PRD: $PRD_DIR"
@@ -1095,6 +1161,8 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
   ITER_START=$(date +%s)
   TIMED_OUT=false
+  STALL_KILLED=false
+  rm -f "/tmp/ralph_stall_$$"
 
   # Run Claude with background watchdog for timeout
   run_claude 2>&1 | tee "$LOG_FILE" &
@@ -1110,10 +1178,30 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ) &
   WATCHDOG_PID=$!
 
+  # Stall watchdog: kill if no output for stall-timeout minutes
+  STALL_WATCHDOG_PID=""
+  if [[ "$STALL_TIMEOUT" -gt 0 ]]; then
+    start_stall_watchdog &
+    STALL_WATCHDOG_PID=$!
+  fi
+
   wait "$CLAUDE_PID" 2>/dev/null
   CLAUDE_EXIT=$?
   kill "$WATCHDOG_PID" 2>/dev/null || true
   wait "$WATCHDOG_PID" 2>/dev/null || true
+  if [[ -n "$STALL_WATCHDOG_PID" ]]; then
+    kill "$STALL_WATCHDOG_PID" 2>/dev/null || true
+    wait "$STALL_WATCHDOG_PID" 2>/dev/null || true
+  fi
+
+  # Check if stall watchdog killed the process
+  if [[ -f "/tmp/ralph_stall_$$" ]]; then
+    STALL_KILLED=true
+    CLAUDE_EXIT=1
+    rm -f "/tmp/ralph_stall_$$"
+    stall_elapsed=$(( $(date +%s) - ITER_START ))
+    emit_ralph_event "stall_detected" "story_id=$STORY_ID" "elapsed_seconds=$stall_elapsed"
+  fi
 
   # Run after_run hook — failure is logged but not fatal
   run_hook "after_run" "${WORKTREE_PATH:-$(pwd)}" || true
@@ -1122,14 +1210,16 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ITER_ELAPSED=$(( ITER_END - ITER_START ))
 
   if [[ "$CLAUDE_EXIT" -ne 0 ]]; then
-    if [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
+    if [[ "$STALL_KILLED" == "true" ]]; then
+      echo "  ⏸️  Stall detected: no output for ${STALL_TIMEOUT} minutes — killed agent"
+    elif [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
       echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes"
       TIMED_OUT=true
     else
       echo "  ⚠️  Claude exited with error — check $LOG_FILE"
     fi
     sleep 5
-    if [[ "$TIMED_OUT" != "true" ]]; then
+    if [[ "$TIMED_OUT" != "true" ]] && [[ "$STALL_KILLED" != "true" ]]; then
       continue
     fi
   fi
