@@ -65,6 +65,7 @@ BACKOFF_ENABLED=true  # Exponential backoff on same-story retries
 STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
+CONFIG_LAST_MTIME=""   # Track ralph-config.json mtime for dynamic reload
 
 # Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -530,6 +531,135 @@ collect_proof_packet() {
       -X POST "${TELEMETRY_URL}/api/ralph/proof" \
       -H "Content-Type: application/json" \
       -d "$json_content" 2>/dev/null || true
+  fi
+
+  return 0
+}
+
+# ─── Helper: dynamic config reload — change settings mid-run without restart ─
+# Checks for ralph-config.json in PRD_DIR at each iteration start.
+# If the file exists and has changed (by mtime), reloads reloadable settings.
+# Reloadable:     model, timeout, quality_gate, strict, skip_tests, review, max_cost, stall_timeout
+# Non-reloadable (launch only): telemetry, telemetry_url, docker, hooks_dir
+# If ralph-config.json is malformed, keeps previous config and logs a warning.
+# If ralph-config.json doesn't exist, uses original launch flags (no-op).
+#
+# Sample ralph-config.json:
+#   { "model": "claude-opus-4-6", "timeout": 45, "quality_gate": true, "stall_timeout": 10 }
+
+load_dynamic_config() {
+  local config_file="${PRD_DIR}/ralph-config.json"
+
+  # If config file doesn't exist, proceed silently with current settings
+  if [[ ! -f "$config_file" ]]; then
+    return 0
+  fi
+
+  # Get file mtime for change detection
+  local current_mtime
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    current_mtime=$(stat -f %m "$config_file" 2>/dev/null || echo "0")
+  else
+    current_mtime=$(stat -c %Y "$config_file" 2>/dev/null || date -r "$config_file" +%s 2>/dev/null || echo "0")
+  fi
+
+  # Skip reload if mtime unchanged
+  if [[ -n "$CONFIG_LAST_MTIME" ]] && [[ "$CONFIG_LAST_MTIME" == "$current_mtime" ]]; then
+    return 0
+  fi
+
+  # Parse config with node — extract reloadable settings as shell assignments
+  # Reloadable keys: "model", "timeout", "quality_gate", "strict", "skip_tests", "review", "max_cost", "stall_timeout"
+  # If malformed JSON, keeps previous config and logs a warning
+  local shell_assignments
+  shell_assignments=$(node -e "
+    try {
+      var cfg = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+      var reloadable = [\"model\", \"timeout\", \"quality_gate\", \"strict\", \"skip_tests\", \"review\", \"max_cost\", \"stall_timeout\"];
+      for (var i = 0; i < reloadable.length; i++) {
+        var k = reloadable[i];
+        if (cfg[k] !== undefined) {
+          console.log('CFG_' + k.toUpperCase() + '=' + String(cfg[k]));
+        }
+      }
+    } catch (e) {
+      process.stderr.write('PARSE_ERROR');
+      process.exit(1);
+    }
+  " "$config_file" 2>/dev/null) || {
+    echo "  ⚠️  Config warning: ralph-config.json is malformed — keeping previous config" >&2
+    return 0
+  }
+
+  # Update mtime tracker
+  CONFIG_LAST_MTIME="$current_mtime"
+
+  # Apply changes — log each one
+  local changes=""
+  local val
+
+  # model
+  val=$(echo "$shell_assignments" | grep '^CFG_MODEL=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$MODEL_OVERRIDE" ]]; then
+    changes="${changes}model changed from ${MODEL_OVERRIDE:-default} to $val, "
+    MODEL_OVERRIDE="$val"
+  fi
+
+  # timeout
+  val=$(echo "$shell_assignments" | grep '^CFG_TIMEOUT=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$ITER_TIMEOUT" ]]; then
+    changes="${changes}timeout changed from ${ITER_TIMEOUT} to $val, "
+    ITER_TIMEOUT="$val"
+    TIMEOUT_SECONDS=$((ITER_TIMEOUT * 60))
+  fi
+
+  # quality_gate
+  val=$(echo "$shell_assignments" | grep '^CFG_QUALITY_GATE=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$QUALITY_GATE" ]]; then
+    changes="${changes}quality_gate changed from $QUALITY_GATE to $val, "
+    QUALITY_GATE="$val"
+  fi
+
+  # strict
+  val=$(echo "$shell_assignments" | grep '^CFG_STRICT=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$STRICT" ]]; then
+    changes="${changes}strict changed from $STRICT to $val, "
+    STRICT="$val"
+  fi
+
+  # skip_tests
+  val=$(echo "$shell_assignments" | grep '^CFG_SKIP_TESTS=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$SKIP_TESTS" ]]; then
+    changes="${changes}skip_tests changed from $SKIP_TESTS to $val, "
+    SKIP_TESTS="$val"
+  fi
+
+  # review
+  val=$(echo "$shell_assignments" | grep '^CFG_REVIEW=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$REVIEW" ]]; then
+    changes="${changes}review changed from $REVIEW to $val, "
+    REVIEW="$val"
+  fi
+
+  # max_cost
+  val=$(echo "$shell_assignments" | grep '^CFG_MAX_COST=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$MAX_COST" ]]; then
+    changes="${changes}max_cost changed from ${MAX_COST:-unset} to $val, "
+    MAX_COST="$val"
+  fi
+
+  # stall_timeout
+  val=$(echo "$shell_assignments" | grep '^CFG_STALL_TIMEOUT=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$STALL_TIMEOUT" ]]; then
+    changes="${changes}stall_timeout changed from $STALL_TIMEOUT to $val, "
+    STALL_TIMEOUT="$val"
+  fi
+
+  # Log summary of changes
+  if [[ -n "$changes" ]]; then
+    # Remove trailing ", "
+    changes="${changes%, }"
+    echo "  🔄 Config reloaded: $changes"
   fi
 
   return 0
@@ -1112,6 +1242,9 @@ MAX_RETRIES_PER_STORY=2   # after this many failures on same story, escalate
 
 while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   ITERATION=$((ITERATION + 1))
+
+  # Dynamic config reload — check ralph-config.json for mid-run setting changes
+  load_dynamic_config
 
   # Clean stale worktrees before each iteration
   clean_stale_worktrees

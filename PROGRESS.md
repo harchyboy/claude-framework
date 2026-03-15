@@ -7,14 +7,16 @@
 ## Current status
 
 **As of:** 2026-03-15
-**Active branch:** ralph/US-005
-**Open PRDs:** ralph-symphony-upgrades (6 stories, 5 complete)
+**Active branch:** ralph/US-006
+**Open PRDs:** ralph-symphony-upgrades (6 stories, 6 complete)
 
 ---
 
 ## What was last worked on
 
-**US-005: Proof packets — always collect evidence** — Added `collect_proof_packet()` function to ralph.sh. After every Claude run (pass or fail), collects structured JSON evidence to `agent_logs/proof-{story_id}-iter{N}.json`. Core fields: story_id, iteration, status (passed/failed/timeout/stall), duration_seconds, model, exit_code. Git stats: files_changed, lines_added, lines_removed (from `git diff --stat`), commit_count (via `git rev-list --count`). Quality gate fields (when gate ran): tests_passed, tests_failed, tests_skipped, lint_errors, lint_warnings, build_clean. Includes collected_at timestamp. If telemetry enabled, POSTs to `/api/ralph/proof`. Atomic file writes (tmp+rename). Errors never fail the iteration. 43 tests added.
+**US-006: Dynamic config reload — change settings mid-run** — Added `load_dynamic_config()` function to ralph.sh. At each iteration start, checks `$PRD_DIR/ralph-config.json` for setting changes. Uses file mtime for efficient change detection (skips re-parse if unchanged). Reloadable settings: model, timeout, quality_gate, strict, skip_tests, review, max_cost, stall_timeout. Non-reloadable (launch only): telemetry, telemetry_url, docker, hooks_dir. Malformed JSON keeps previous config with warning. Missing config file is a silent no-op. Logs each changed setting with old/new values. Uses node for JSON parsing, grep for value extraction. 31 tests added.
+
+Previous: US-005 — Proof packets (collect_proof_packet, always-on evidence, 43 tests).
 
 Previous: US-004 — Exponential backoff (calculate_backoff, backoff_sleep, --no-backoff, 22 tests).
 
@@ -79,3 +81,4 @@ Previous: Track 3 — automation pipeline, tmux orchestration, shared memory.
 | 2026-03-15 | US-003: Stall detection — start_stall_watchdog(), --stall-timeout, log mtime monitoring, grace period, 18 tests | US-003 |
 | 2026-03-15 | US-004: Exponential backoff — calculate_backoff(), backoff_sleep(), --no-backoff, interruptible sleep, 22 tests | US-004 |
 | 2026-03-15 | US-005: Proof packets — collect_proof_packet(), always-on evidence collection, git stats, quality gate fields, telemetry POST, 43 tests | US-005 |
+| 2026-03-15 | US-006: Dynamic config reload — load_dynamic_config(), mtime-based change detection, 8 reloadable settings, malformed JSON handling, 31 tests | US-006 |
