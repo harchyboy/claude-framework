@@ -24,6 +24,7 @@
 #   --docker            Run Claude inside Docker container with network isolation
 #   --auto-pr           Auto-create GitHub PR when verification passes (confidence >= 0.9)
 #   --pr-threshold <n>  Confidence threshold for auto-PR (default: 0.9)
+#   --hooks-dir <path>  Directory for lifecycle hook scripts (default: scripts/ralph-hooks/)
 #   --use-local         Enable Ollama pre-generation for test/doc stories (default: on)
 #   --no-local          Disable Ollama auto-routing, always use Claude
 #   --help              Show this help
@@ -54,7 +55,9 @@ DEV_URL="http://localhost:3000"
 USE_DOCKER=false
 AUTO_PR=false
 PR_THRESHOLD="0.9"
+HOOKS_DIR="scripts/ralph-hooks/"
 USE_LOCAL=true   # Auto-route local-eligible stories to Ollama when available
+HOOK_TIMEOUT=60
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
 
@@ -86,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     --docker)        USE_DOCKER=true ;;
     --auto-pr)       AUTO_PR=true ;;
     --pr-threshold)  PR_THRESHOLD="$2"; shift ;;
+    --hooks-dir)     HOOKS_DIR="$2"; shift ;;
     --use-local)     USE_LOCAL=true ;;
     --no-local)      USE_LOCAL=false ;;
     --help)
@@ -268,6 +272,54 @@ build_json() {
   echo "{$fields}"
 }
 
+# ─── Helper: run workspace lifecycle hook ────────────────────────────────────
+# Usage: run_hook <hook_name> <work_dir>
+# Hooks: after_create, before_run, after_run, before_remove
+# Returns 0 if hook succeeds or doesn't exist. Non-zero on hook failure.
+
+run_hook() {
+  local hook_name="$1"
+  local work_dir="$2"
+  local hook_script="${HOOKS_DIR}/${hook_name}.sh"
+
+  # Hooks are optional — if dir or script missing, proceed silently
+  if [[ ! -d "$HOOKS_DIR" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$hook_script" ]] || [[ ! -x "$hook_script" ]]; then
+    return 0
+  fi
+
+  echo "  🪝 Running hook: ${hook_name}" >&2
+
+  # Determine timeout command (gtimeout on macOS, timeout on Linux/MSYS)
+  local timeout_cmd="timeout"
+  if command -v gtimeout &>/dev/null; then
+    timeout_cmd="gtimeout"
+  fi
+
+  # Run hook with timeout, passing environment variables
+  # stdout/stderr captured to log file
+  local hook_exit=0
+  (
+    export RALPH_STORY_ID="${STORY_ID:-}"
+    export RALPH_ITERATION="${ITERATION:-0}"
+    export RALPH_PRD_DIR="${PRD_DIR:-}"
+    export RALPH_MODEL="${MODEL:-${MODEL_OVERRIDE:-claude-sonnet-4-6}}"
+    cd "$work_dir"
+    "$timeout_cmd" "$HOOK_TIMEOUT" bash "$hook_script"
+  ) >> "${LOG_FILE:-/dev/null}" 2>&1 || hook_exit=$?
+
+  if [[ $hook_exit -ne 0 ]]; then
+    echo "  ⚠️  Hook ${hook_name} failed (exit $hook_exit)" >&2
+    return $hook_exit
+  fi
+
+  echo "  ✅ Hook ${hook_name} completed" >&2
+  return 0
+}
+
 # ─── Helper: emit telemetry event via HTTP POST to Command API ───────────────
 
 emit_ralph_event() {
@@ -417,6 +469,15 @@ create_worktree() {
 
   mkdir -p "$WORKTREE_DIR"
   git worktree add "$worktree_path" -b "$branch_name" HEAD >/dev/null 2>&1
+
+  # Run after_create hook — failure means worktree creation failed
+  if ! run_hook "after_create" "$worktree_path"; then
+    echo "  ⚠️  after_create hook failed — worktree creation failed" >&2
+    git worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
+    git branch -D "$branch_name" 2>/dev/null || true
+    return 1
+  fi
+
   echo "$worktree_path"
 }
 
@@ -461,6 +522,9 @@ merge_worktree() {
   else
     echo "  ℹ️  No new commits in worktree"
   fi
+
+  # Run before_remove hook — failure is logged but not fatal
+  run_hook "before_remove" "$worktree_path" || true
 
   # Clean up
   git worktree remove "$worktree_path" --force 2>/dev/null || rm -rf "$worktree_path"
@@ -761,6 +825,7 @@ echo "   Telemetry: $TELEMETRY (url: $TELEMETRY_URL)"
 echo "   Verification: $VERIFY"
 echo "   Docker: $USE_DOCKER"
 echo "   Auto-PR: $AUTO_PR (threshold: $PR_THRESHOLD)"
+echo "   Hooks dir: $HOOKS_DIR"
 echo "   Worktrees: $WORKTREE_DIR"
 echo "   PRD: $PRD_DIR"
 echo ""
@@ -923,6 +988,12 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
   fi
 
+  # Run before_run hook — if it fails, skip this attempt (retry next iteration)
+  if ! run_hook "before_run" "${WORKTREE_PATH:-$(pwd)}"; then
+    echo "  ⏭️  before_run hook failed — skipping this attempt"
+    continue
+  fi
+
   # Run Claude with timeout
   if [[ "$USE_DOCKER" == "true" ]]; then
     echo "  🤖 Running Claude ($MODEL) in Docker..."
@@ -982,6 +1053,9 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   CLAUDE_EXIT=$?
   kill "$WATCHDOG_PID" 2>/dev/null || true
   wait "$WATCHDOG_PID" 2>/dev/null || true
+
+  # Run after_run hook — failure is logged but not fatal
+  run_hook "after_run" "${WORKTREE_PATH:-$(pwd)}" || true
 
   ITER_END=$(date +%s)
   ITER_ELAPSED=$(( ITER_END - ITER_START ))

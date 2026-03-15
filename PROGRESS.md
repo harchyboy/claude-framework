@@ -6,15 +6,17 @@
 
 ## Current status
 
-**As of:** 2026-03-05
-**Active branch:** master
-**Open PRDs:** None
+**As of:** 2026-03-15
+**Active branch:** ralph/US-001
+**Open PRDs:** ralph-symphony-upgrades (6 stories, 1 complete)
 
 ---
 
 ## What was last worked on
 
-Track 3 — automation pipeline, tmux orchestration, shared memory.
+**US-001: Workspace lifecycle hooks** — Added `run_hook()` helper and `--hooks-dir` flag to ralph.sh. Four hook points: `after_create` (post-worktree, failure = retry), `before_run` (pre-Claude, failure = skip attempt), `after_run` (post-Claude, non-fatal), `before_remove` (pre-cleanup, non-fatal). Each hook gets 60s timeout, env vars (RALPH_STORY_ID, RALPH_ITERATION, RALPH_PRD_DIR, RALPH_MODEL), and output captured to iteration log. Fully optional — no hooks dir = silent proceed.
+
+Previous: Track 3 — automation pipeline, tmux orchestration, shared memory.
 
 **Auto-PR pipeline**: Added `--auto-pr` and `--pr-threshold` flags to ralph.sh. After verification passes with confidence >= threshold (default 0.9), automatically creates a GitHub PR via `gh pr create` with story info, acceptance criteria, and proof packet summary. Includes branch push, duplicate PR detection, and telemetry.
 
@@ -64,3 +66,4 @@ Track 3 — automation pipeline, tmux orchestration, shared memory.
 | 2026-03-04 | Verification system, Hartz Land scripts, MCP setup, proof packets, review queue | N/A (framework enhancement) |
 | 2026-03-05 | P0: CLAUDE.md trim, P1: Docker isolation, P1: Session mgmt, P2: Worktrees, P2: Context mgmt, P3: Local models | N/A (framework enhancement) |
 | 2026-03-05 | MCPs installed (Playwright, Memory, Filesystem, GitHub w/ PAT), E2E test on hartzai-website (3 bugs fixed), Track 3: auto-PR, tmux orchestration, shared memory | N/A (framework enhancement) |
+| 2026-03-15 | US-001: Workspace lifecycle hooks — run_hook(), --hooks-dir, 4 hook points, 21 tests | US-001 |
