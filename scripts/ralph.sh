@@ -811,6 +811,61 @@ ${prd_content}
 PROMPT
 }
 
+build_continuation_prompt() {
+  # Shorter prompt for retrying the same story — saves tokens on re-attempts
+  # Shorter than build_iteration_prompt — omits full PRD and agent prompt file
+
+  # Extract acceptance criteria for this story
+  local criteria
+  local prd_file="${PRD_DIR}/prd.json"
+  criteria=$(node -e "
+    const prd = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+    const story = prd.userStories.find(s => s.id === process.argv[2]);
+    if (story && story.acceptanceCriteria) {
+      story.acceptanceCriteria.forEach(c => console.log('- ' + c));
+    }
+  " "$prd_file" "$STORY_ID" 2>/dev/null || echo "- (could not read criteria)")
+
+  # Get last 50 lines of previous attempt's log
+  local prev_log_tail=""
+  if [[ -n "${PREV_LOG_FILE:-}" ]] && [[ -f "${PREV_LOG_FILE}" ]]; then
+    prev_log_tail=$(tail -50 "${PREV_LOG_FILE}" 2>/dev/null || echo "(previous log not available)")
+  else
+    prev_log_tail="(no previous log available)"
+  fi
+
+  cat <<PROMPT
+# Ralph Loop — Continuation (Retry #${CONSECUTIVE_SAME})
+
+You are retrying story **${STORY_ID}**. The previous attempt failed.
+
+## Previous attempt log (last 50 lines)
+\`\`\`
+${prev_log_tail}
+\`\`\`
+
+## Acceptance criteria
+${criteria}
+
+## Instructions
+Fix the remaining issues and ensure all acceptance criteria pass.
+
+1. Read PROGRESS.md for what was already done
+2. Run the quality gate: \`bash scripts/quality-gate.sh\` to see current state
+3. Fix all failures
+4. Update PROGRESS.md
+5. Commit: \`feat: [description] (closes ${STORY_ID})\`
+6. Update PRD: Mark story \`passes: true\` in prd.json, commit that too
+7. Stop after completing the story
+
+## Rules
+- NEVER skip the quality gate
+- NEVER mark a story as passed without all acceptance criteria met
+- Check docs/failed-approaches.md before retrying the same approach
+
+PROMPT
+}
+
 # ─── Main loop ───────────────────────────────────────────────────────────────
 
 TIMEOUT_SECONDS=$((ITER_TIMEOUT * 60))
@@ -944,8 +999,16 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   COMMIT=$(git rev-parse --short=6 HEAD)
   LOG_FILE="agent_logs/iteration_${ITERATION}_${COMMIT}.log"
 
-  # Build and save the prompt
-  build_iteration_prompt > /tmp/ralph_prompt_$$.md
+  # Build and save the prompt — full for first attempt, continuation for retries
+  if [[ "$CONSECUTIVE_SAME" -gt 0 ]] && [[ -n "${PREV_LOG_FILE:-}" ]]; then
+    echo "  📝 Using continuation prompt (retry #${CONSECUTIVE_SAME})"
+    build_continuation_prompt > /tmp/ralph_continuation_$$.md
+    PROMPT_FILE="/tmp/ralph_continuation_$$.md"
+  else
+    echo "  📝 Using full prompt"
+    build_iteration_prompt > /tmp/ralph_prompt_$$.md
+    PROMPT_FILE="/tmp/ralph_prompt_$$.md"
+  fi
 
   # Determine model
   if [[ -n "$MODEL_OVERRIDE" ]]; then
@@ -1000,8 +1063,6 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   else
     echo "  🤖 Running Claude ($MODEL)..."
   fi
-
-  PROMPT_FILE="/tmp/ralph_prompt_$$.md"
 
   # Docker/worktree wrapper — runs Claude in the right context
   # Uses --prompt-file to avoid "Argument list too long" on Windows
@@ -1073,7 +1134,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
   fi
 
-  rm -f /tmp/ralph_prompt_$$.md
+  rm -f /tmp/ralph_prompt_$$.md /tmp/ralph_continuation_$$.md
 
   # Merge worktree back to main branch
   if [[ -n "$WORKTREE_PATH" ]]; then
@@ -1216,6 +1277,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
   # Track for next iteration's context injection
   PREV_STORY_ID="$STORY_ID"
+  PREV_LOG_FILE="$LOG_FILE"
   if [[ "$STORIES_THIS_ITER" -gt 0 ]]; then
     PREV_RESULT="completed"
   elif [[ "$GATE_RESULT" == "failed" ]]; then

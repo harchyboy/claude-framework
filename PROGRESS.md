@@ -7,14 +7,16 @@
 ## Current status
 
 **As of:** 2026-03-15
-**Active branch:** ralph/US-001
-**Open PRDs:** ralph-symphony-upgrades (6 stories, 1 complete)
+**Active branch:** ralph/US-002
+**Open PRDs:** ralph-symphony-upgrades (6 stories, 2 complete)
 
 ---
 
 ## What was last worked on
 
-**US-001: Workspace lifecycle hooks** — Added `run_hook()` helper and `--hooks-dir` flag to ralph.sh. Four hook points: `after_create` (post-worktree, failure = retry), `before_run` (pre-Claude, failure = skip attempt), `after_run` (post-Claude, non-fatal), `before_remove` (pre-cleanup, non-fatal). Each hook gets 60s timeout, env vars (RALPH_STORY_ID, RALPH_ITERATION, RALPH_PRD_DIR, RALPH_MODEL), and output captured to iteration log. Fully optional — no hooks dir = silent proceed.
+**US-002: Continuation prompts for story retries** — Added `build_continuation_prompt()` function to ralph.sh. On retry of the same story, Ralph sends a shorter prompt (~200-400 tokens) instead of the full prompt (~2000+ tokens). Continuation prompt includes: story ID, acceptance criteria (extracted from prd.json), last 50 lines of previous attempt's log, and fix instructions. Prompt selection logged as "Using full prompt" or "Using continuation prompt (retry #N)". Written to `/tmp/ralph_continuation_$$.md`. 17 tests added. Existing flags and behavior unchanged.
+
+Previous: US-001 — Workspace lifecycle hooks (run_hook, --hooks-dir, 4 hook points, 21 tests).
 
 Previous: Track 3 — automation pipeline, tmux orchestration, shared memory.
 
@@ -67,3 +69,4 @@ Previous: Track 3 — automation pipeline, tmux orchestration, shared memory.
 | 2026-03-05 | P0: CLAUDE.md trim, P1: Docker isolation, P1: Session mgmt, P2: Worktrees, P2: Context mgmt, P3: Local models | N/A (framework enhancement) |
 | 2026-03-05 | MCPs installed (Playwright, Memory, Filesystem, GitHub w/ PAT), E2E test on hartzai-website (3 bugs fixed), Track 3: auto-PR, tmux orchestration, shared memory | N/A (framework enhancement) |
 | 2026-03-15 | US-001: Workspace lifecycle hooks — run_hook(), --hooks-dir, 4 hook points, 21 tests | US-001 |
+| 2026-03-15 | US-002: Continuation prompts — build_continuation_prompt(), retry detection, token savings, 17 tests | US-002 |
