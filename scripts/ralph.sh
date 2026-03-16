@@ -1352,6 +1352,9 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
   emit_ralph_event "iteration_start"
 
+  COMMIT=$(git rev-parse --short=6 HEAD)
+  LOG_FILE="agent_logs/iteration_${ITERATION}_${COMMIT}.log"
+
   WORKTREE_PATH=""
   if git worktree list > /dev/null 2>&1; then
     WORKTREE_PATH=$(create_worktree "$STORY_ID") || {
@@ -1359,9 +1362,6 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       WORKTREE_PATH=""
     }
   fi
-
-  COMMIT=$(git rev-parse --short=6 HEAD)
-  LOG_FILE="agent_logs/iteration_${ITERATION}_${COMMIT}.log"
 
   # Build and save the prompt — full for first attempt, continuation for retries
   if [[ "$CONSECUTIVE_SAME" -gt 0 ]] && [[ -n "${PREV_LOG_FILE:-}" ]]; then
