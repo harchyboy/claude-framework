@@ -105,6 +105,42 @@ Agent filtering (12 files changed):
 If the user passes `--full`, skip all filtering and spawn every agent.
 Useful for pre-release reviews or when you want maximum coverage regardless of file categories.
 
+## Agent verdict footer (REQUIRED)
+
+Every review agent MUST end its output with a structured verdict footer:
+
+```
+VERDICT: APPROVE | REQUEST_CHANGES | ABSTAIN
+REASON: <one-line justification>
+```
+
+### Verdict rules
+- **APPROVE**: No P1 findings AND 2 or fewer P2 findings
+- **REQUEST_CHANGES**: Any P1 finding OR 3+ P2 findings
+- **ABSTAIN**: Agent cannot meaningfully evaluate (e.g., accessibility reviewer on backend-only changes)
+
+Agents MUST follow these rules mechanically. Do not APPROVE when P1s exist.
+
+### Phase 3a: Consensus calculation
+
+After collecting all agent verdicts (Phase 2) and before synthesis (Phase 3):
+
+1. Extract each agent's VERDICT line from its output
+2. Build a JSON payload:
+   ```json
+   {
+     "threshold": 75,
+     "agents": [
+       {"name": "security-sentinel", "verdict": "APPROVE", "p1_count": 0},
+       {"name": "typescript-reviewer", "verdict": "REQUEST_CHANGES", "p1_count": 2}
+     ]
+   }
+   ```
+3. Run `bash scripts/consensus-gate.sh --json <payload-file>`
+4. Include the consensus result in the consolidated output (see CONSENSUS section below)
+
+If `consensus-gate.sh` is not found, skip consensus calculation and note it in the output.
+
 ## Parallelism rule
 
 Phase 2 quality agents spawn in ONE message. Never spawn sequentially.
@@ -165,6 +201,15 @@ Maintainability: 0.85
 Error handling:  0.80
 
 Overall: 0.83 — NEEDS WORK (threshold: 0.85)
+
+CONSENSUS
+─────────
+Threshold: 75%
+  ✓ security-sentinel — APPROVE (0 P1s)
+  ✗ typescript-reviewer — REQUEST_CHANGES (2 P1s)
+  ✓ architecture-strategist — APPROVE (0 P1s)
+  – accessibility-reviewer — ABSTAIN
+Consensus: 66% (2/3) — BLOCKED (below 75% threshold)
 
 LEARNINGS CHECK
 ───────────────

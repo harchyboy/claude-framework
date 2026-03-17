@@ -31,6 +31,59 @@ When evaluating completed work, score these dimensions 0.0–1.0.
 
 If `overall_score < 0.85`, create a remediation task with specific fix instructions before marking complete.
 
+## Consensus Gating
+
+Review agents emit structured verdicts (`APPROVE`, `REQUEST_CHANGES`, `ABSTAIN`).
+Consensus gating aggregates these into a single APPROVED/BLOCKED decision.
+
+### Formula
+```
+consensus% = APPROVE_count / (APPROVE_count + REQUEST_CHANGES_count) × 100
+```
+- ABSTAIN agents are excluded from the denominator
+- If all agents ABSTAIN → BLOCKED
+- Default threshold: **75%**
+
+### P1 Veto
+Any agent with `p1_count > 0` forces **BLOCKED** regardless of consensus percentage.
+This prevents merging code with critical issues even if most agents approve.
+
+### Standalone usage
+```bash
+# From a JSON file
+bash scripts/consensus-gate.sh --json verdicts.json
+
+# From stdin
+echo '{"threshold":75,"agents":[...]}' | bash scripts/consensus-gate.sh
+
+# Custom threshold
+bash scripts/consensus-gate.sh --threshold 80 --json verdicts.json
+
+# Quiet mode (exit code only)
+bash scripts/consensus-gate.sh --quiet --json verdicts.json
+```
+
+### JSON format
+```json
+{
+  "threshold": 75,
+  "agents": [
+    {"name": "security-sentinel", "verdict": "APPROVE", "p1_count": 0},
+    {"name": "typescript-reviewer", "verdict": "REQUEST_CHANGES", "p1_count": 1}
+  ]
+}
+```
+
+### Exit codes
+- `0` — APPROVED (consensus >= threshold, no P1 vetoes)
+- `1` — BLOCKED (below threshold, P1 veto, all abstain, or error)
+
+### Integration with /review
+The `/review` command automatically runs consensus gating in Phase 3a (between agent collection and synthesis). See `.claude/commands/review.md`.
+
+### Integration with workflows
+Workflow YAML files can specify `quality_gate.consensus_threshold` on any phase. The workflow runner calls `consensus-gate.sh` automatically. See `.claude/docs/workflow-as-code.md`.
+
 ## Review output format
 All review agents report findings in this format:
 ```
