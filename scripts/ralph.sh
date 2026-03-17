@@ -1187,6 +1187,16 @@ ${prd_content}
 - If stuck after 3 attempts: document in docs/failed-approaches.md and pick a different story
 - Check docs/solutions/ before implementing any non-trivial pattern
 
+## Exit status protocol
+When you finish, your LAST line of output MUST be one of these structured statuses:
+
+- \`STATUS: DONE\` — Story completed. All tests pass. Committed.
+- \`STATUS: DONE_WITH_CONCERNS <reason>\` — Story completed but you have doubts. Explain.
+- \`STATUS: NEEDS_CONTEXT <what>\` — Cannot proceed without information. State what's needed.
+- \`STATUS: BLOCKED <reason>\` — Cannot complete. Explain the blocker.
+
+This status line is parsed by Ralph to determine next steps. Always include it.
+
 PROMPT
 }
 
@@ -1241,6 +1251,13 @@ Fix the remaining issues and ensure all acceptance criteria pass.
 - NEVER skip the quality gate
 - NEVER mark a story as passed without all acceptance criteria met
 - Check docs/failed-approaches.md before retrying the same approach
+
+## Exit status protocol
+When you finish, your LAST line of output MUST be one of:
+- \`STATUS: DONE\` — Story completed. All tests pass. Committed.
+- \`STATUS: DONE_WITH_CONCERNS <reason>\` — Completed but you have doubts.
+- \`STATUS: NEEDS_CONTEXT <what>\` — Cannot proceed. State what's needed.
+- \`STATUS: BLOCKED <reason>\` — Cannot complete. Explain the blocker.
 
 PROMPT
 }
@@ -1557,6 +1574,45 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   fi
 
   rm -f /tmp/ralph_prompt_$$.md /tmp/ralph_continuation_$$.md
+
+  # ─── Parse agent exit status protocol ──────────────────────────────────────
+  # Agents report: STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
+  AGENT_STATUS=$(grep -o 'STATUS: [A-Z_]*' "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/STATUS: //' || echo "")
+  AGENT_STATUS_DETAIL=$(grep 'STATUS:' "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/.*STATUS: [A-Z_]* *//' || echo "")
+
+  case "$AGENT_STATUS" in
+    DONE)
+      echo "  ✅ Agent reports: DONE"
+      PREV_RESULT="done"
+      ;;
+    DONE_WITH_CONCERNS)
+      echo "  ⚠️  Agent reports: DONE_WITH_CONCERNS — $AGENT_STATUS_DETAIL"
+      PREV_RESULT="done_with_concerns"
+      emit_ralph_event "agent_concerns" "story_id=$STORY_ID" "concerns=$AGENT_STATUS_DETAIL"
+      ;;
+    NEEDS_CONTEXT)
+      echo "  ❓ Agent reports: NEEDS_CONTEXT — $AGENT_STATUS_DETAIL"
+      echo "     This story needs human input before retry."
+      PREV_RESULT="needs_context"
+      emit_ralph_event "needs_context" "story_id=$STORY_ID" "needed=$AGENT_STATUS_DETAIL"
+      ;;
+    BLOCKED)
+      echo "  🚫 Agent reports: BLOCKED — $AGENT_STATUS_DETAIL"
+      echo "     Consider: more context, more capable model, smaller tasks, or escalate."
+      PREV_RESULT="blocked"
+      emit_ralph_event "agent_blocked" "story_id=$STORY_ID" "reason=$AGENT_STATUS_DETAIL"
+      ;;
+    *)
+      # No structured status found — fall back to exit code
+      if [[ "$CLAUDE_EXIT" -eq 0 ]]; then
+        PREV_RESULT="completed"
+      else
+        PREV_RESULT="error"
+      fi
+      ;;
+  esac
+
+  PREV_STORY_ID="$STORY_ID"
 
   # Merge worktree back to main branch
   if [[ -n "$WORKTREE_PATH" ]]; then

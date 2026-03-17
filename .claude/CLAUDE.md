@@ -71,7 +71,23 @@
 - No completion claims without fresh verification evidence.
 - Identify the command that validates your claim. Run it. Read the output. Only then claim success.
 - Never say "should work", "probably", or "seems to". These are unverified assumptions.
-- After 3 failed fix attempts on the same issue, stop. Question whether the approach is architecturally sound. Escalate or try a fundamentally different approach.
+- After 3 failed fix attempts on the same issue, **stop and question the architecture**:
+  - This is NOT a failed hypothesis — this is a wrong architecture.
+  - Each fix revealing a new problem in a different place = architectural issue, not a bug.
+  - Fixes requiring "massive refactoring" = the pattern is fundamentally unsound.
+  - Do NOT attempt fix #4. Escalate to the user or try a fundamentally different approach.
+  - Document the failed approach in `docs/failed-approaches.md` before trying a new direction.
+
+## Agent Status Protocol
+
+When completing a task as a subagent, report one of these structured statuses:
+
+- **DONE** — Task completed successfully. All tests pass. Ready for review.
+- **DONE_WITH_CONCERNS** — Task completed but with doubts. List concerns explicitly. Reviewer decides whether to address before merging.
+- **NEEDS_CONTEXT** — Cannot proceed without information that wasn't provided. State exactly what is needed.
+- **BLOCKED** — Cannot complete the task. Explain the blocker. Options: provide more context, use a more capable model, break the task into smaller pieces, or escalate to a human.
+
+Never ignore an escalation. If an agent says it's stuck, something needs to change.
 
 ## Anti-Rationalization
 

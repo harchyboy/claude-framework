@@ -71,7 +71,8 @@ Repo:            [REPLACE]
 | Review completed work | `/review` (smart-filtered) or `/review --full` |
 | Check blast radius of changes | `blast-radius.sh` (auto in `/review`, or standalone) |
 | Verify story actually works | `/verify` |
-| Debug competing hypotheses | Agent Teams, Debate pattern |
+| Debug everyday bugs | `/debug --systematic` (4-phase root cause) |
+| Debug complex/cross-system bugs | `/debug` (3-agent debate pattern) |
 | Capture learnings | `/compound` |
 | Recover after /clear | `session-catchup.sh` |
 | Overnight autonomous dev | `hartz-land/start-all.sh --verify` |
