@@ -156,7 +156,37 @@ When using `role="tablist"` / `role="tab"`, you must implement the **complete** 
 
 ---
 
-## 7. Performance
+## 7. Shell Scripts
+
+See `.claude/rules/shell-scripts.md` for detailed rules. Key prevention patterns:
+
+### Platform compatibility
+- **Never use `grep -P`** — not available on Git Bash. Use `grep -E` instead.
+- Test cross-platform scripts on both Linux and Git Bash before committing.
+
+### Text processing safety
+- **Anchor sed/awk patterns with `^` and `$`** to avoid matching prose in markdown files alongside code.
+- Unanchored patterns create massive false-positive blast radii.
+
+### Set -e pitfalls
+- **Never use bare `((VAR++))`** in `set -e` scripts — it exits when the variable becomes truthy.
+- Use `VAR=$((VAR+1))` or wrap arithmetic in `|| true` instead.
+
+### Pipe subshells
+- **Never use pipe-to-while for stateful operations** — `command | while read VAR` runs in a subshell and loses variable assignments.
+- Use `< file.txt` or process substitution (`< <(command)`) instead.
+
+### Function naming
+- **Use scoped, descriptive names** like `blast_radius_log()` not `log()`.
+- Generic names (`log`, `fail`, `main`) match everywhere and create false-positive blast radii when analyzing code impact.
+
+### Verification
+- Run `shellcheck -x script.sh` before every commit.
+- Add `-x` flag to test scripts locally: `bash -x script.sh`.
+
+---
+
+## 8. Performance
 
 ### File I/O
 - When reading multiple independent files, use `Promise.all` (Node) or `ThreadPoolExecutor` (Python) — not sequential loops.
@@ -171,6 +201,7 @@ When using `role="tablist"` / `role="tab"`, you must implement the **complete** 
 
 ## Checklist (use before every commit)
 
+### General
 - [ ] All `fetch()` calls check `resp.ok` before `.json()`
 - [ ] No secrets in request bodies — headers only
 - [ ] All form fields have label associations (`htmlFor`/`id` or `aria-label`)
@@ -181,3 +212,14 @@ When using `role="tablist"` / `role="tab"`, you must implement the **complete** 
 - [ ] File reads from user input have path traversal guards
 - [ ] Error messages don't leak internal configuration state
 - [ ] Parallel I/O used for independent file/network operations
+
+### Shell scripts
+- [ ] No `grep -P` — use `grep -E` for cross-platform compatibility
+- [ ] sed/awk patterns anchored with `^` and `$` (not matching prose)
+- [ ] No bare `((VAR++))` in `set -e` scripts
+- [ ] No pipe-to-while for stateful operations
+- [ ] Function names are scoped (e.g., `blast_radius_log()` not `log()`)
+- [ ] `shellcheck -x script.sh` passes with zero warnings
+- [ ] Tested on both Linux and Git Bash (if cross-platform)
+- [ ] Temp files cleaned up; no `.tmp` orphans
+- [ ] Explicit status on error, not relying on `set -e` alone
