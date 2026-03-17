@@ -28,20 +28,35 @@ Apply active flags throughout:
 
 ## What happens
 
-### Phase 1: Spec compliance (runs FIRST)
+### Phase 1: Spec compliance + Blast radius (runs FIRST)
 1. Read PROGRESS.md and recent git diff to understand what changed
-2. Spawn `spec-compliance-reviewer` to verify the implementation matches requirements
-3. Wait for spec compliance results before proceeding
+2. Run `bash scripts/blast-radius.sh --json` to compute the blast radius of the changes
+3. Spawn `spec-compliance-reviewer` to verify the implementation matches requirements
+4. Wait for spec compliance and blast-radius results before proceeding
+
+### Phase 1a: Blast radius context
+
+The blast-radius JSON output provides:
+- `symbols`: list of changed function/class names
+- `affected_files`: files that transitively depend on changed symbols, with depth and linkage
+- `affected_file_count`: total number of transitively affected files
+
+Use this data to:
+- **Feed `architecture-strategist`**: include the affected file list in its prompt so it can assess whether the change respects module boundaries
+- **Flag high blast radius**: if `affected_file_count > 20`, add a P2 finding: "HIGH BLAST RADIUS — consider splitting this change"
+- **Enrich other agents**: include the blast-radius summary in each agent's context so they know which files are indirectly affected
+
+If `blast-radius.sh` is not found or fails, skip this step and note it in the output.
 
 ### Phase 2: Quality review (parallel)
-4. Check docs/solutions/ for related past issues (learnings-researcher step)
-5. Determine which quality agents are relevant based on the changes
-6. Spawn all relevant quality agents in ONE message (parallel execution)
-7. Each agent reviews independently and reports findings
+5. Check docs/solutions/ for related past issues (learnings-researcher step)
+6. Determine which quality agents are relevant based on the changes
+7. Spawn all relevant quality agents in ONE message (parallel execution) — include blast-radius context in each agent's prompt
+8. Each agent reviews independently and reports findings
 
 ### Phase 3: Synthesis
-8. Synthesise all findings (spec + quality) into a single report
-9. Present consolidated P1/P2/P3 list with agent attribution
+9. Synthesise all findings (spec + quality + blast radius) into a single report
+10. Present consolidated P1/P2/P3 list with agent attribution
 
 ## Agent selection logic — Smart filtering
 
@@ -210,6 +225,14 @@ Threshold: 75%
   ✓ architecture-strategist — APPROVE (0 P1s)
   – accessibility-reviewer — ABSTAIN
 Consensus: 66% (2/3) — BLOCKED (below 75% threshold)
+
+BLAST RADIUS
+────────────
+Changed symbols: 19
+Affected files:  6 (depth 2) — LOW
+  scripts/tests/test-ralph-backoff.sh      via backoff_sleep (test)
+  scripts/tests/test-ralph-continuation.sh via build_continuation_prompt (test)
+  scripts/tests/test-ralph-hooks.sh        via run_hook (test)
 
 LEARNINGS CHECK
 ───────────────

@@ -69,6 +69,7 @@ Repo:            [REPLACE]
 | Quick task routing | `/task` |
 | Research a topic | `/research` (use `--quick` / `--deep` / `--exhaustive` for depth) |
 | Review completed work | `/review` (smart-filtered) or `/review --full` |
+| Check blast radius of changes | `blast-radius.sh` (auto in `/review`, or standalone) |
 | Verify story actually works | `/verify` |
 | Debug competing hypotheses | Agent Teams, Debate pattern |
 | Capture learnings | `/compound` |
