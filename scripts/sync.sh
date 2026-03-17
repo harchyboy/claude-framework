@@ -228,6 +228,28 @@ cmd_push() {
           chmod +x "$project_dir/scripts/$sname"
         fi
       done
+      # Copy scripts/*.js (yaml-to-json.js, etc.)
+      for jsfile in "$FRAMEWORK_DIR/scripts/"*.js; do
+        [[ ! -f "$jsfile" ]] && continue
+        cp "$jsfile" "$project_dir/scripts/$(basename "$jsfile")"
+      done
+      # Copy scripts/tests/
+      if [[ -d "$FRAMEWORK_DIR/scripts/tests" ]]; then
+        mkdir -p "$project_dir/scripts/tests"
+        for tfile in "$FRAMEWORK_DIR/scripts/tests/"*; do
+          [[ ! -f "$tfile" ]] && continue
+          cp "$tfile" "$project_dir/scripts/tests/$(basename "$tfile")"
+          chmod +x "$project_dir/scripts/tests/$(basename "$tfile")"
+        done
+      fi
+      # Copy workflows/ (YAML workflow definitions)
+      if [[ -d "$FRAMEWORK_DIR/workflows" ]]; then
+        mkdir -p "$project_dir/workflows"
+        for wfyaml in "$FRAMEWORK_DIR/workflows/"*.yaml "$FRAMEWORK_DIR/workflows/"*.yml; do
+          [[ ! -f "$wfyaml" ]] && continue
+          cp "$wfyaml" "$project_dir/workflows/$(basename "$wfyaml")"
+        done
+      fi
       # Copy CODE-STANDARDS.md if it exists
       if [[ -f "$FRAMEWORK_DIR/docs/CODE-STANDARDS.md" ]]; then
         cp "$FRAMEWORK_DIR/docs/CODE-STANDARDS.md" "$project_dir/docs/CODE-STANDARDS.md"
@@ -322,7 +344,7 @@ fs.writeFileSync(process.argv[1], JSON.stringify(existing, null, 2) + '\\n');
 
       # Stage and commit the submodule pointer + updated files
       cd "$project_dir"
-      git add .claude-framework .claude/ scripts/ docs/CODE-STANDARDS.md .github/ 2>/dev/null || true
+      git add .claude-framework .claude/ scripts/ workflows/ docs/CODE-STANDARDS.md .github/ 2>/dev/null || true
       if ! git diff --cached --quiet 2>/dev/null; then
         git commit -m "chore: update claude framework to $framework_commit" 2>/dev/null
         ok "$name — committed submodule update"
