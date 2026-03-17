@@ -78,6 +78,10 @@ Repo:            [REPLACE]
 | Watch specific PR checks | `/loop 5m gh pr checks <number>` |
 | Morning review | `hartz-land/daily-digest.sh` |
 | Cheap exploration mode | Any command with `--lean --readonly` flags |
+| Run a YAML workflow | `workflow-runner.sh workflows/<name>.yaml` |
+| Review with consensus gate | `/review` (auto) or `ralph.sh --review --consensus` |
+| Dry-run a workflow | `workflow-runner.sh workflows/<name>.yaml --dry-run` |
+| Debug via debate pattern | `workflow-runner.sh workflows/debug-investigation.yaml --var bug_description="..."` |
 
 ## TOKEN COMPRESSION (RTK)
 
@@ -99,6 +103,7 @@ enters the context window. Saves 60-90% tokens on common dev commands.
 - Ralph loop usage: `.claude/docs/ralph-loop.md`
 - Tech stack conventions: `.claude/docs/tech-stack.md`
 - Anti-rationalization (full): `.claude/docs/anti-rationalization.md`
+- Workflow-as-code: `.claude/docs/workflow-as-code.md`
 - Code standards: `docs/CODE-STANDARDS.md`
 - Failed approaches: `docs/failed-approaches.md`
 - Hartz Land guide: `docs/HARTZ-LAND-GUIDE.md`

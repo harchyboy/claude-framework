@@ -1,0 +1,62 @@
+name: code-review
+description: Multi-agent code review — spec compliance gate, parallel specialist review, consensus synthesis
+version: "1.0"
+
+variables:
+  scope: "."
+  base_branch: main
+
+phases:
+  - name: spec-compliance
+    execution: sequential
+    on_failure: abort
+    agents:
+      - name: spec-compliance-reviewer
+        command: review changes in {{scope}} against base branch {{base_branch}} for spec compliance
+        type: claude
+        model: claude-sonnet-4-5
+        required: true
+
+  - name: quality-review
+    execution: parallel
+    agents:
+      - name: security-sentinel
+        command: review changes in {{scope}} for security vulnerabilities, injection risks, and exposure of secrets
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+      - name: typescript-reviewer
+        command: review changes in {{scope}} for TypeScript correctness, type safety, and interface contracts
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+      - name: architecture-strategist
+        command: review changes in {{scope}} for architectural soundness, coupling, and maintainability
+        type: claude
+        model: claude-opus-4-5
+        timeout: 10m
+
+      - name: error-handling-reviewer
+        command: review changes in {{scope}} for complete error handling and resilience patterns
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+      - name: test-quality-reviewer
+        command: review changes in {{scope}} for test coverage, test quality, and adherence to AAA pattern
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+  - name: synthesis
+    execution: sequential
+    quality_gate:
+      consensus_threshold: 75
+      required_checks: []
+    agents:
+      - name: review-synthesiser
+        command: synthesise all review findings from the quality-review phase into a P1/P2/P3 prioritised report
+        type: claude
+        model: claude-opus-4-5

@@ -1,0 +1,46 @@
+name: debug-investigation
+description: Debate pattern — parallel hypothesis generation followed by synthesis to identify root cause and propose a fix
+version: "1.0"
+
+variables:
+  bug_description: ""
+  affected_files: ""
+
+phases:
+  - name: hypotheses
+    execution: parallel
+    agents:
+      - name: hypothesis-a
+        command: >
+          Given the bug "{{bug_description}}" in files {{affected_files}},
+          propose your best hypothesis for the root cause and supporting evidence.
+          Focus on data-flow and state management causes.
+        type: claude
+        model: claude-sonnet-4-5
+
+      - name: hypothesis-b
+        command: >
+          Given the bug "{{bug_description}}" in files {{affected_files}},
+          propose your best hypothesis for the root cause and supporting evidence.
+          Focus on concurrency, timing, and async causes.
+        type: claude
+        model: claude-sonnet-4-5
+
+      - name: hypothesis-c
+        command: >
+          Given the bug "{{bug_description}}" in files {{affected_files}},
+          propose your best hypothesis for the root cause and supporting evidence.
+          Focus on integration boundaries and external dependency causes.
+        type: claude
+        model: claude-sonnet-4-5
+
+  - name: synthesis
+    execution: sequential
+    agents:
+      - name: debate-synthesiser
+        command: >
+          Evaluate all three hypotheses for "{{bug_description}}".
+          Rank them by likelihood with reasoning, select the most probable root cause,
+          and propose a concrete fix with implementation steps.
+        type: claude
+        model: claude-opus-4-5

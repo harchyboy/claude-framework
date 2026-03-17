@@ -1,0 +1,65 @@
+name: feature-development
+description: Ralph loop — pull latest, implement next story, gate quality, run parallel review, merge on consensus
+version: "1.0"
+
+variables:
+  branch: feature-branch
+  prd_file: prd/prd.json
+  run_id: ""
+
+phases:
+  - name: sync
+    execution: sequential
+    agents:
+      - name: git-sync
+        command: git pull --rebase
+        type: bash
+
+  - name: implement
+    execution: sequential
+    agents:
+      - name: story-implementer
+        command: implement next story from {{prd_file}} on branch {{branch}}
+        type: claude
+        model: claude-sonnet-4-5
+
+  - name: quality-gate
+    execution: sequential
+    on_failure: retry
+    max_retries: 2
+    agents:
+      - name: quality-gate-runner
+        command: bash scripts/quality-gate.sh
+        type: bash
+
+  - name: review
+    execution: parallel
+    quality_gate:
+      consensus_threshold: 75
+      required_checks: []
+    agents:
+      - name: spec-compliance
+        command: review implementation for spec compliance against {{prd_file}}
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+      - name: security-sentinel
+        command: review implementation for security vulnerabilities and risks
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+      - name: typescript-reviewer
+        command: review implementation for TypeScript correctness and type safety
+        type: claude
+        model: claude-sonnet-4-5
+        timeout: 10m
+
+  - name: merge
+    execution: sequential
+    condition: test -f workflow-results/{{run_id}}/consensus-approved
+    agents:
+      - name: git-merge
+        command: git merge {{branch}}
+        type: bash

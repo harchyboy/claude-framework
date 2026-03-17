@@ -29,6 +29,8 @@
 #   --no-backoff        Disable exponential backoff on story retries
 #   --use-local         Enable Ollama pre-generation for test/doc stories (default: on)
 #   --no-local          Disable Ollama auto-routing, always use Claude
+#   --consensus         Run consensus gate after review (requires --review)
+#   --workflow <file>   Delegate to workflow-runner.sh with a YAML workflow file
 #   --help              Show this help
 
 set -euo pipefail
@@ -62,6 +64,8 @@ USE_LOCAL=true   # Auto-route local-eligible stories to Ollama when available
 HOOK_TIMEOUT=60
 STALL_TIMEOUT=5  # Minutes of no output before killing agent (0=disabled)
 BACKOFF_ENABLED=true  # Exponential backoff on same-story retries
+CONSENSUS=false       # Run consensus gate after review phase
+WORKFLOW_FILE=""      # YAML workflow file (delegates to workflow-runner.sh)
 STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
@@ -100,14 +104,37 @@ while [[ $# -gt 0 ]]; do
     --no-backoff)    BACKOFF_ENABLED=false ;;
     --use-local)     USE_LOCAL=true ;;
     --no-local)      USE_LOCAL=false ;;
+    --consensus)     CONSENSUS=true ;;
+    --workflow)      WORKFLOW_FILE="$2"; shift ;;
     --help)
-      sed -n '2,21p' "$0"
+      sed -n '2,35p' "$0"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
   shift
 done
+
+# ─── Workflow delegation ────────────────────────────────────────────────────
+# If --workflow is set, delegate entirely to workflow-runner.sh and exit
+
+if [[ -n "$WORKFLOW_FILE" ]]; then
+  if [[ ! -f "scripts/workflow-runner.sh" ]]; then
+    echo "❌ workflow-runner.sh not found — cannot run workflow"
+    exit 1
+  fi
+  if [[ ! -f "$WORKFLOW_FILE" ]]; then
+    echo "❌ Workflow file not found: $WORKFLOW_FILE"
+    exit 1
+  fi
+  echo "📋 Delegating to workflow-runner.sh: $WORKFLOW_FILE"
+  WORKFLOW_ARGS=()
+  [[ -n "$MODEL_OVERRIDE" ]] && WORKFLOW_ARGS+=(--var "model=$MODEL_OVERRIDE")
+  [[ "$QUALITY_GATE" == "true" ]] && WORKFLOW_ARGS+=(--var "quality_gate=true")
+  [[ "$REVIEW" == "true" ]] && WORKFLOW_ARGS+=(--var "review=true")
+  [[ "$CONSENSUS" == "true" ]] && WORKFLOW_ARGS+=(--var "consensus=true")
+  exec bash scripts/workflow-runner.sh "$WORKFLOW_FILE" "${WORKFLOW_ARGS[@]}"
+fi
 
 # ─── Helper: count pending stories (uses node, not python3) ─────────────────
 
@@ -539,7 +566,7 @@ collect_proof_packet() {
 # ─── Helper: dynamic config reload — change settings mid-run without restart ─
 # Checks for ralph-config.json in PRD_DIR at each iteration start.
 # If the file exists and has changed (by mtime), reloads reloadable settings.
-# Reloadable:     model, timeout, quality_gate, strict, skip_tests, review, max_cost, stall_timeout
+# Reloadable:     model, timeout, quality_gate, strict, skip_tests, review, max_cost, stall_timeout, consensus
 # Non-reloadable (launch only): telemetry, telemetry_url, docker, hooks_dir
 # If ralph-config.json is malformed, keeps previous config and logs a warning.
 # If ralph-config.json doesn't exist, uses original launch flags (no-op).
@@ -569,13 +596,13 @@ load_dynamic_config() {
   fi
 
   # Parse config with node — extract reloadable settings as shell assignments
-  # Reloadable keys: "model", "timeout", "quality_gate", "strict", "skip_tests", "review", "max_cost", "stall_timeout"
+  # Reloadable keys: "model", "timeout", "quality_gate", "strict", "skip_tests", "review", "max_cost", "stall_timeout", "consensus"
   # If malformed JSON, keeps previous config and logs a warning
   local shell_assignments
   shell_assignments=$(node -e "
     try {
       var cfg = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-      var reloadable = [\"model\", \"timeout\", \"quality_gate\", \"strict\", \"skip_tests\", \"review\", \"max_cost\", \"stall_timeout\"];
+      var reloadable = [\"model\", \"timeout\", \"quality_gate\", \"strict\", \"skip_tests\", \"review\", \"max_cost\", \"stall_timeout\", \"consensus\"];
       for (var i = 0; i < reloadable.length; i++) {
         var k = reloadable[i];
         if (cfg[k] !== undefined) {
@@ -646,6 +673,13 @@ load_dynamic_config() {
   if [[ -n "$val" ]] && [[ "$val" != "$MAX_COST" ]]; then
     changes="${changes}max_cost changed from ${MAX_COST:-unset} to $val, "
     MAX_COST="$val"
+  fi
+
+  # consensus
+  val=$(echo "$shell_assignments" | grep '^CFG_CONSENSUS=' | head -1 | cut -d= -f2- || true)
+  if [[ -n "$val" ]] && [[ "$val" != "$CONSENSUS" ]]; then
+    changes="${changes}consensus changed from $CONSENSUS to $val, "
+    CONSENSUS="$val"
   fi
 
   # stall_timeout
@@ -1574,6 +1608,42 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       STORIES_COMPLETED=$((STORIES_COMPLETED + 1))
       GATE_RESULT="passed"
     fi
+  fi
+
+  # ─── Consensus gate (after review) ────────────────────────────────────
+  CONSENSUS_RESULT="skipped"
+  if [[ "$CONSENSUS" == "true" ]] && [[ "$REVIEW" == "true" ]] && [[ -f "scripts/consensus-gate.sh" ]]; then
+    # Extract VERDICT lines from the review log
+    VERDICTS_JSON=$(node -e "
+      const fs = require('fs');
+      const log = fs.readFileSync('$LOG_FILE', 'utf8');
+      const lines = log.split('\n');
+      const agents = [];
+      let currentAgent = '';
+      for (const line of lines) {
+        const agentMatch = line.match(/(?:spawn|running|agent)\s+(\S+-\S+)/i);
+        if (agentMatch) currentAgent = agentMatch[1];
+        const verdictMatch = line.match(/^VERDICT:\s*(APPROVE|REQUEST_CHANGES|ABSTAIN)/);
+        if (verdictMatch && currentAgent) {
+          const p1Lines = lines.filter(l => l.includes('P1') && l.includes(currentAgent));
+          agents.push({name: currentAgent, verdict: verdictMatch[1], p1_count: p1Lines.length});
+          currentAgent = '';
+        }
+      }
+      console.log(JSON.stringify({threshold: 75, agents: agents}));
+    " 2>/dev/null || echo '{"threshold":75,"agents":[]}')
+
+    echo "  🗳️  Running consensus gate..."
+    CONSENSUS_FILE=$(mktemp)
+    echo "$VERDICTS_JSON" > "$CONSENSUS_FILE"
+    if bash scripts/consensus-gate.sh --json "$CONSENSUS_FILE"; then
+      CONSENSUS_RESULT="approved"
+      echo "  ✅ Consensus: APPROVED"
+    else
+      CONSENSUS_RESULT="blocked"
+      echo "  ❌ Consensus: BLOCKED"
+    fi
+    rm -f "$CONSENSUS_FILE"
   fi
 
   # ─── Proof packet collection (always, pass or fail) ────────────────────
