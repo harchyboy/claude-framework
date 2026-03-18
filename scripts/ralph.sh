@@ -878,24 +878,22 @@ merge_worktree() {
     if git merge "$branch_name" --no-edit 2>/dev/null; then
       echo "  ✅ Merge successful"
     else
-      # Auto-resolve conflicts by taking the worktree (theirs) version.
-      # Worktree branches contain the latest story work — safe to prefer.
+      # Merge conflict — fail loudly instead of silently dropping main-branch changes.
+      # The worktree branch is preserved so the user can resolve manually.
       local conflicted
       conflicted=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+      echo "  ❌ Merge conflict in branch $branch_name"
       if [[ -n "$conflicted" ]]; then
+        echo "  Conflicted files:"
         for f in $conflicted; do
-          git checkout --theirs "$f" 2>/dev/null && git add "$f" 2>/dev/null
-          echo "  🔧 Auto-resolved conflict in $f (took worktree version)"
+          echo "    - $f"
         done
       fi
-      if git commit --no-edit 2>/dev/null; then
-        echo "  ✅ Merge successful (with auto-resolved conflicts)"
-      else
-        echo "  ⚠️  Merge conflict — keeping worktree branch for manual resolution"
-        git merge --abort 2>/dev/null || true
-        [[ "$stashed" == true ]] && git stash pop -q 2>/dev/null || true
-        return 1
-      fi
+      echo "  ℹ️  Branch $branch_name preserved for manual resolution."
+      echo "  To resolve: git merge $branch_name"
+      git merge --abort 2>/dev/null || true
+      [[ "$stashed" == true ]] && git stash pop -q 2>/dev/null || true
+      return 1
     fi
     [[ "$stashed" == true ]] && git stash pop -q 2>/dev/null || true
   else
