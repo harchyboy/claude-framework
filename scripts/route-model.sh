@@ -15,7 +15,7 @@
 # Output (stdout):
 #   local:<model>   Use Ollama with named model
 #   haiku           Use claude-haiku-4-5-20251001
-#   sonnet          Use claude-sonnet-4-6
+#   sonnet          Use claude-opus-4-6
 #   opus            Use claude-opus-4-6
 #
 # Exit codes:
@@ -161,7 +161,7 @@ case "$TASK_TYPE" in
     exit 0
     ;;
   *)
-    [[ "$QUIET" != "true" ]] && echo "  unknown task type '$TASK_TYPE' — defaulting to sonnet" >&2
+    [[ "$QUIET" != "true" ]] && echo "  unknown task type '$TASK_TYPE' — defaulting to opus" >&2
     echo "sonnet"
     exit 0
     ;;

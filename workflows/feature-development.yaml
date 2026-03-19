@@ -21,7 +21,7 @@ phases:
       - name: story-implementer
         command: implement next story from {{prd_file}} on branch {{branch}}
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
 
   - name: quality-gate
     execution: sequential
@@ -41,19 +41,19 @@ phases:
       - name: spec-compliance
         command: review implementation for spec compliance against {{prd_file}}
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
       - name: security-sentinel
         command: review implementation for security vulnerabilities and risks
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
       - name: typescript-reviewer
         command: review implementation for TypeScript correctness and type safety
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
   - name: merge

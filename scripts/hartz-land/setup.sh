@@ -211,7 +211,7 @@ node -e "
     log_dir: '$HARTZ_DIR/logs',
     setup_timestamp: new Date().toISOString(),
     defaults: {
-      ralph_model: 'claude-sonnet-4-6',
+      ralph_model: 'claude-opus-4-6',
       ralph_timeout_min: 30,
       ralph_max_iterations: 20,
       quality_gate: true,

@@ -14,7 +14,7 @@ phases:
       - name: spec-compliance-reviewer
         command: review changes in {{scope}} against base branch {{base_branch}} for spec compliance
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         required: true
 
   - name: quality-review
@@ -23,13 +23,13 @@ phases:
       - name: security-sentinel
         command: review changes in {{scope}} for security vulnerabilities, injection risks, and exposure of secrets
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
       - name: typescript-reviewer
         command: review changes in {{scope}} for TypeScript correctness, type safety, and interface contracts
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
       - name: architecture-strategist
@@ -41,13 +41,13 @@ phases:
       - name: error-handling-reviewer
         command: review changes in {{scope}} for complete error handling and resilience patterns
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
       - name: test-quality-reviewer
         command: review changes in {{scope}} for test coverage, test quality, and adherence to AAA pattern
         type: claude
-        model: claude-sonnet-4-5
+        model: claude-opus-4-6
         timeout: 10m
 
   - name: synthesis

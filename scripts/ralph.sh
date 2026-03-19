@@ -10,7 +10,7 @@
 #   --quality-gate      Run typecheck/lint/tests after each iteration
 #   --review            Spawn review agent after implementation
 #   --strict            Fail on lint warnings
-#   --model <id>        Override Claude model (default: claude-sonnet-4-6)
+#   --model <id>        Override Claude model (default: claude-opus-4-6)
 #   --skip-tests        Skip tests in quality gate
 #   --skip-preflight    Skip PRD validation
 #   --no-cost           Disable cost tracking
@@ -362,7 +362,7 @@ run_hook() {
     export RALPH_STORY_ID="${STORY_ID:-}"
     export RALPH_ITERATION="${ITERATION:-0}"
     export RALPH_PRD_DIR="${PRD_DIR:-}"
-    export RALPH_MODEL="${MODEL:-${MODEL_OVERRIDE:-claude-sonnet-4-6}}"
+    export RALPH_MODEL="${MODEL:-${MODEL_OVERRIDE:-claude-opus-4-6}}"
     cd "$work_dir"
     "$timeout_cmd" "$HOOK_TIMEOUT" bash "$hook_script"
   ) >> "${LOG_FILE:-/dev/null}" 2>&1 || hook_exit=$?
@@ -552,7 +552,7 @@ collect_proof_packet() {
 
     console.log(JSON.stringify(packet, null, 2));
   " "$story_id" "$iteration" "$status" "$exit_code" "$duration" \
-    "${MODEL:-claude-sonnet-4-6}" \
+    "${MODEL:-claude-opus-4-6}" \
     "$files_changed" "$lines_added" "$lines_removed" "$commit_count" \
     "$collected_at" \
     "${QUALITY_GATE:-false}" \
@@ -734,7 +734,7 @@ emit_ralph_event() {
       json=$(build_json \
         "prd_path=${PRD_DIR}" \
         "branch_name=$(git branch --show-current 2>/dev/null || echo unknown)" \
-        "model=${MODEL_OVERRIDE:-claude-sonnet-4-6}" \
+        "model=${MODEL_OVERRIDE:-claude-opus-4-6}" \
         "total_stories=$(node -e "const p=JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json','utf8'));console.log(p.userStories.length)" 2>/dev/null || echo 0)" \
         "config=$(echo "{}" | sed 's/"/\\"/g')" \
         "$@")
@@ -1822,7 +1822,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   if [[ -n "$MODEL_OVERRIDE" ]]; then
     MODEL="$MODEL_OVERRIDE"
   else
-    MODEL="claude-sonnet-4-6"
+    MODEL="claude-opus-4-6"
   fi
 
   # ─── Local model auto-routing ────────────────────────────────────────────────

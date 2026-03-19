@@ -6,7 +6,7 @@
 #
 # Options:
 #   --max-iterations <n>   Max iterations per project (default: 20)
-#   --model <model-id>     Override Claude model (default: claude-sonnet-4-6)
+#   --model <model-id>     Override Claude model (default: claude-opus-4-6)
 #   --timeout <min>        Per-iteration timeout (default: 30)
 #   --dry-run              Show what would be started without starting
 #   --project <name>       Only start a specific project
@@ -28,7 +28,7 @@ set -euo pipefail
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 MAX_ITERATIONS=20
-MODEL="claude-sonnet-4-6"
+MODEL="claude-opus-4-6"
 TIMEOUT=30
 DRY_RUN=false
 SPECIFIC_PROJECT=""
