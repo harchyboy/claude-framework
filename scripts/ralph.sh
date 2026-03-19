@@ -43,6 +43,9 @@ RALPH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$RALPH_SCRIPT_DIR/lib/vercel-logs.sh" ]]; then
   . "$RALPH_SCRIPT_DIR/lib/vercel-logs.sh"
 fi
+if [[ -f "$RALPH_SCRIPT_DIR/lib/notify.sh" ]]; then
+  . "$RALPH_SCRIPT_DIR/lib/notify.sh"
+fi
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -1574,11 +1577,44 @@ build_continuation_prompt() {
     prev_log_tail="(no previous log available)"
   fi
 
+  # Find most recent diagnosis for this story (self-healing context)
+  local prev_diagnosis=""
+  local diag_summary=""
+  local diag_action=""
+  local di
+  for ((di=ITERATION-1; di>=1; di--)); do
+    local diag_file="agent_logs/diagnosis-${STORY_ID}-iter${di}.json"
+    if [[ -f "$diag_file" ]]; then
+      prev_diagnosis=$(cat "$diag_file" 2>/dev/null || echo "")
+      diag_summary=$(node -e "const d=JSON.parse(require('fs').readFileSync('$diag_file','utf8'));console.log(d.summary||'')" 2>/dev/null || echo "")
+      diag_action=$(node -e "const d=JSON.parse(require('fs').readFileSync('$diag_file','utf8'));console.log(d.suggested_action||'')" 2>/dev/null || echo "")
+      break
+    fi
+  done
+
   cat <<PROMPT
 # Ralph Loop — Continuation (Retry #${CONSECUTIVE_SAME})
 
 You are retrying story **${STORY_ID}**. The previous attempt failed.
+${prev_diagnosis:+
+## PREVIOUS FAILURE DIAGNOSIS (READ THIS FIRST)
 
+The previous attempt was automatically analysed. Fix these specific issues:
+
+**Summary:** ${diag_summary}
+**Suggested action:** ${diag_action}
+
+<details>
+<summary>Full diagnosis JSON</summary>
+
+\`\`\`json
+${prev_diagnosis}
+\`\`\`
+</details>
+
+**CRITICAL: Do NOT repeat the same approach that caused this failure.**
+Check \`docs/failed-approaches.md\` and fix the specific errors listed above.
+}
 ## Previous attempt log (last 50 lines)
 \`\`\`
 ${prev_log_tail}
@@ -1717,6 +1753,12 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       echo "Once fixed, restart Ralph to continue."
     } > "$STUCK_FILE"
     echo "  📝 Wrote stuck report: $STUCK_FILE"
+
+    # Notify: story stuck — needs human attention
+    notify_send "story_stuck" \
+      "Story stuck: $STORY_ID" \
+      "Failed $CONSECUTIVE_SAME consecutive attempts. Human attention needed.\nStuck report: $STUCK_FILE" \
+      "critical"
 
     # Skip this story — mark it stuck and move to next
     node -e "
@@ -1924,6 +1966,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     if [[ "$STALL_KILLED" == "true" ]]; then
       echo "  ⏸️  Stall detected: no output for ${STALL_TIMEOUT} minutes — killed agent"
       ralph_diagnose_failure "$STORY_ID" "$LOG_FILE" "stall"
+      notify_send "critical_failure" "Agent stalled on $STORY_ID" "Iteration $ITERATION: No output for ${STALL_TIMEOUT} minutes. Agent killed. May need investigation." "warning"
     elif [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
       echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes"
       TIMED_OUT=true
@@ -1931,6 +1974,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     else
       echo "  ⚠️  Claude exited with error"
       ralph_diagnose_failure "$STORY_ID" "$LOG_FILE" "crash"
+      notify_send "critical_failure" "Agent crashed on $STORY_ID" "Iteration $ITERATION: Claude exited with error code $CLAUDE_EXIT. Check agent_logs/ for details." "warning"
     fi
     sleep 5
     if [[ "$TIMED_OUT" != "true" ]] && [[ "$STALL_KILLED" != "true" ]]; then
@@ -2218,6 +2262,27 @@ ELAPSED=$(( (END_TIME - START_TIME) / 60 ))
 
 FINAL_REMAINING=$(count_pending "${PRD_DIR}/prd.json")
 emit_ralph_event "session_end"
+
+# Notify: loop complete
+STORIES_DONE=$(node -e "
+  const prd=JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json','utf8'));
+  console.log(prd.userStories.filter(s=>s.passes).length+'/'+prd.userStories.length);
+" 2>/dev/null || echo "?/?")
+STUCK_COUNT=$(node -e "
+  const prd=JSON.parse(require('fs').readFileSync('${PRD_DIR}/prd.json','utf8'));
+  console.log(prd.userStories.filter(s=>s.stuck).length);
+" 2>/dev/null || echo "0")
+
+NOTIFY_SEVERITY="info"
+NOTIFY_MSG="Stories: ${STORIES_DONE} complete | Iterations: ${ITERATION} | Time: ${ELAPSED}min | Remaining: ${FINAL_REMAINING}"
+if [[ "$STUCK_COUNT" -gt 0 ]]; then
+  NOTIFY_MSG="${NOTIFY_MSG} | Stuck: ${STUCK_COUNT} (needs attention)"
+  NOTIFY_SEVERITY="warning"
+fi
+if [[ "$FINAL_REMAINING" -eq 0 ]] && [[ "$STUCK_COUNT" -eq 0 ]]; then
+  NOTIFY_MSG="${NOTIFY_MSG} | All stories complete!"
+fi
+notify_send "ralph_complete" "Ralph loop complete" "$NOTIFY_MSG" "$NOTIFY_SEVERITY"
 
 # ─── JSON summary ───────────────────────────────────────────────────────────
 
