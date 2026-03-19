@@ -36,6 +36,7 @@ DEV_TIMEOUT=30
 JSON_OUTPUT=false
 ASSERTIONS_FILE=""
 VERIFY_FILES_PATTERN=""
+LOCKED_CRITERIA=""
 
 if [[ -z "$STORY_ID" ]] || [[ "$STORY_ID" == "--help" ]]; then
   sed -n '2,16p' "$0"
@@ -54,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --json)          JSON_OUTPUT=true ;;
     --assertions)    ASSERTIONS_FILE="$2"; shift ;;
     --verify-files)  VERIFY_FILES_PATTERN="$2"; shift ;;
+    --locked-criteria) LOCKED_CRITERIA="$2"; shift ;;
     *) ;;
   esac
   shift
@@ -110,24 +112,41 @@ mkdir -p "$PROOF_DIR/screenshots"
 json_output_log ""
 json_output_log "${BOLD}Phase 1: Extracting acceptance criteria${NC}"
 
-node -e "
-  const prd = JSON.parse(require('fs').readFileSync('$PRD_PATH', 'utf8'));
-  const story = prd.userStories.find(s => s.id === '$STORY_ID');
-  if (!story) { console.error('Story not found: $STORY_ID'); process.exit(1); }
+# Use locked (immutable) criteria if available, otherwise fall back to PRD
+CRITERIA_SOURCE="prd"
+if [[ -n "$LOCKED_CRITERIA" ]] && [[ -f "$LOCKED_CRITERIA" ]]; then
+  CRITERIA_SOURCE="locked"
+  info "Using locked criteria: $LOCKED_CRITERIA"
+  node -e "
+    const locked = JSON.parse(require('fs').readFileSync('$LOCKED_CRITERIA', 'utf8'));
+    let md = '# Acceptance Criteria — ' + locked.story_id + ': ' + locked.title + '\n\n';
+    md += '> Source: LOCKED (immutable, locked at ' + locked.locked_at + ')\n\n';
+    locked.criteria.forEach((c, i) => {
+      md += (i + 1) + '. ' + c + '\n';
+    });
+    require('fs').writeFileSync('$PROOF_DIR/criteria.md', md);
+    console.log('  Extracted ' + locked.criteria.length + ' locked criteria');
+  "
+else
+  node -e "
+    const prd = JSON.parse(require('fs').readFileSync('$PRD_PATH', 'utf8'));
+    const story = prd.userStories.find(s => s.id === '$STORY_ID');
+    if (!story) { console.error('Story not found: $STORY_ID'); process.exit(1); }
 
-  let md = '# Acceptance Criteria — ' + story.id + ': ' + story.title + '\n\n';
-  md += '> ' + story.description + '\n\n';
-  story.acceptanceCriteria.forEach((c, i) => {
-    md += (i + 1) + '. ' + c + '\n';
-  });
-  md += '\n## Files in Scope\n\n';
-  (story.filesInScope || []).forEach(f => { md += '- ' + f + '\n'; });
-  if (story.notes) md += '\n## Notes\n\n' + story.notes + '\n';
+    let md = '# Acceptance Criteria — ' + story.id + ': ' + story.title + '\n\n';
+    md += '> ' + story.description + '\n\n';
+    story.acceptanceCriteria.forEach((c, i) => {
+      md += (i + 1) + '. ' + c + '\n';
+    });
+    md += '\n## Files in Scope\n\n';
+    (story.filesInScope || []).forEach(f => { md += '- ' + f + '\n'; });
+    if (story.notes) md += '\n## Notes\n\n' + story.notes + '\n';
 
-  require('fs').writeFileSync('$PROOF_DIR/criteria.md', md);
-  console.log('  Extracted ' + story.acceptanceCriteria.length + ' criteria');
-"
-ok "Criteria extracted to $PROOF_DIR/criteria.md"
+    require('fs').writeFileSync('$PROOF_DIR/criteria.md', md);
+    console.log('  Extracted ' + story.acceptanceCriteria.length + ' criteria');
+  "
+fi
+ok "Criteria extracted to $PROOF_DIR/criteria.md (source: $CRITERIA_SOURCE)"
 
 # ─── Generate diff ───────────────────────────────────────────────────────────
 
@@ -166,20 +185,20 @@ if [[ -f "package.json" ]]; then
 
   if [[ "$HAS_VITEST" == "yes" ]]; then
     info "Running Vitest..."
-    npx vitest run --reporter=verbose 2>&1 | tee "$TEST_OUTPUT" || TEST_EXIT=$?
+    npx vitest run --reporter=verbose >"$TEST_OUTPUT" 2>&1 || TEST_EXIT=$?
   elif [[ "$HAS_JEST" == "yes" ]]; then
     info "Running Jest..."
-    npx jest --verbose 2>&1 | tee "$TEST_OUTPUT" || TEST_EXIT=$?
+    npx jest --verbose >"$TEST_OUTPUT" 2>&1 || TEST_EXIT=$?
   elif npm test --if-present 2>/dev/null; then
     info "Running npm test..."
-    npm test 2>&1 | tee "$TEST_OUTPUT" || TEST_EXIT=$?
+    npm test >"$TEST_OUTPUT" 2>&1 || TEST_EXIT=$?
   else
     echo "No test runner detected" > "$TEST_OUTPUT"
     warn "No test runner found"
   fi
 elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "pytest.ini" ]]; then
   info "Running pytest..."
-  python -m pytest -v 2>&1 | tee "$TEST_OUTPUT" || TEST_EXIT=$?
+  python -m pytest -v >"$TEST_OUTPUT" 2>&1 || TEST_EXIT=$?
 else
   echo "No test framework detected" > "$TEST_OUTPUT"
   warn "No test framework detected"
@@ -282,7 +301,7 @@ if [[ "$SKIP_RUNTIME" != "true" ]]; then
       if [[ -n "$PLAYWRIGHT_CONFIG" ]]; then
         info "Found Playwright config: $PLAYWRIGHT_CONFIG"
         info "Running Playwright tests..."
-        npx playwright test --reporter=json --output="$PROOF_DIR/screenshots" 2>&1 | tee "$PROOF_DIR/playwright-output.txt" || RUNTIME_EXIT=$?
+        npx playwright test --reporter=json --output="$PROOF_DIR/screenshots" >"$PROOF_DIR/playwright-output.txt" 2>&1 || RUNTIME_EXIT=$?
 
         # Extract JSON results if available
         if [[ -f "test-results.json" ]]; then
@@ -303,7 +322,7 @@ if [[ "$SKIP_RUNTIME" != "true" ]]; then
 
       elif [[ -n "$E2E_DIR" ]]; then
         info "Found e2e directory: $E2E_DIR — running Playwright tests..."
-        npx playwright test "$E2E_DIR" --reporter=json --output="$PROOF_DIR/screenshots" 2>&1 | tee "$PROOF_DIR/playwright-output.txt" || RUNTIME_EXIT=$?
+        npx playwright test "$E2E_DIR" --reporter=json --output="$PROOF_DIR/screenshots" >"$PROOF_DIR/playwright-output.txt" 2>&1 || RUNTIME_EXIT=$?
 
         if [[ -f "test-results.json" ]]; then
           mv test-results.json "$RUNTIME_RESULTS_FILE"
@@ -669,8 +688,23 @@ fi
 # Build verdict from test + runtime results
 node -e "
   const fs = require('fs');
-  const prd = JSON.parse(fs.readFileSync('$PRD_PATH', 'utf8'));
-  const story = prd.userStories.find(s => s.id === '$STORY_ID');
+
+  // Use locked criteria if available (immutable evaluation harness)
+  let story;
+  const lockedPath = '$LOCKED_CRITERIA';
+  if (lockedPath && fs.existsSync(lockedPath)) {
+    const locked = JSON.parse(fs.readFileSync(lockedPath, 'utf8'));
+    // Build a story-like object from locked criteria
+    const prd = JSON.parse(fs.readFileSync('$PRD_PATH', 'utf8'));
+    story = prd.userStories.find(s => s.id === '$STORY_ID') || {};
+    // Override criteria with locked version (immutable)
+    story.acceptanceCriteria = locked.criteria;
+    story.id = locked.story_id;
+    story.title = locked.title;
+  } else {
+    const prd = JSON.parse(fs.readFileSync('$PRD_PATH', 'utf8'));
+    story = prd.userStories.find(s => s.id === '$STORY_ID');
+  }
 
   const testsPassed = $TEST_EXIT === 0;
   const testOutput = fs.readFileSync('$PROOF_DIR/test-results.txt', 'utf8');

@@ -69,6 +69,7 @@ BACKOFF_ENABLED=true  # Exponential backoff on same-story retries
 CONSENSUS=false       # Run consensus gate after review phase
 WORKFLOW_FILE=""      # YAML workflow file (delegates to workflow-runner.sh)
 JSON_OUTPUT=false     # Emit JSON summary at end instead of human-readable
+AUTO_RESET=true       # Git reset failed stories (branch only accumulates successes)
 STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
@@ -111,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     --no-local)      USE_LOCAL=false ;;
     --consensus)     CONSENSUS=true ;;
     --json)          JSON_OUTPUT=true ;;
+    --no-reset)      AUTO_RESET=false ;;
     --workflow)      WORKFLOW_FILE="$2"; shift ;;
     --help)
       sed -n '2,35p' "$0"
@@ -1123,6 +1125,147 @@ fi
 
 mkdir -p agent_logs
 
+# ─── Lock acceptance criteria (immutable evaluation harness) ─────────────────
+
+CRITERIA_LOCK_DIR=".ralph-lock"
+
+ralph_lock_criteria() {
+  local prd_path="$1"
+
+  if [[ -f "$CRITERIA_LOCK_DIR/.lock_checksum" ]]; then
+    # Verify existing lock against current PRD
+    local current_prd_hash
+    current_prd_hash=$(node -e "
+      const crypto = require('crypto');
+      const fs = require('fs');
+      const prd = JSON.parse(fs.readFileSync('$prd_path', 'utf8'));
+      const criteria = prd.userStories.map(s => ({id: s.id, criteria: s.acceptanceCriteria}));
+      console.log(crypto.createHash('sha256').update(JSON.stringify(criteria)).digest('hex'));
+    " 2>/dev/null || echo "")
+
+    local stored_hash
+    stored_hash=$(cat "$CRITERIA_LOCK_DIR/.lock_checksum" 2>/dev/null || echo "")
+
+    if [[ "$current_prd_hash" == "$stored_hash" ]]; then
+      echo "  🔒 Criteria lock intact (hash: ${stored_hash:0:12}...)"
+      return 0
+    else
+      echo "  ⚠️  PRD criteria changed since lock — re-locking"
+    fi
+  fi
+
+  mkdir -p "$CRITERIA_LOCK_DIR"
+
+  node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const prd = JSON.parse(fs.readFileSync('$prd_path', 'utf8'));
+    const allCriteria = [];
+
+    prd.userStories.forEach(story => {
+      const locked = {
+        story_id: story.id,
+        title: story.title,
+        criteria: story.acceptanceCriteria || [],
+        locked_at: new Date().toISOString()
+      };
+      const content = JSON.stringify(locked, null, 2);
+      fs.writeFileSync('$CRITERIA_LOCK_DIR/' + story.id + '.criteria.json', content);
+      allCriteria.push({id: story.id, criteria: story.acceptanceCriteria});
+    });
+
+    const hash = crypto.createHash('sha256').update(JSON.stringify(allCriteria)).digest('hex');
+    fs.writeFileSync('$CRITERIA_LOCK_DIR/.lock_checksum', hash);
+    console.log('  🔒 Locked ' + prd.userStories.length + ' stories (hash: ' + hash.substring(0, 12) + '...)');
+  " 2>/dev/null || echo "  ⚠️  Criteria lock failed (non-blocking)"
+}
+
+ralph_verify_criteria_integrity() {
+  local story_id="$1"
+  local lock_file="$CRITERIA_LOCK_DIR/${story_id}.criteria.json"
+
+  if [[ ! -f "$lock_file" ]]; then
+    echo "  ⚠️  No locked criteria for $story_id — using PRD directly"
+    return 1
+  fi
+
+  # Verify the lock file hasn't been tampered with
+  local file_hash
+  file_hash=$(node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const content = fs.readFileSync('$lock_file', 'utf8');
+    const parsed = JSON.parse(content);
+    console.log(crypto.createHash('sha256').update(JSON.stringify({id: parsed.story_id, criteria: parsed.criteria})).digest('hex'));
+  " 2>/dev/null || echo "")
+
+  local prd_hash
+  prd_hash=$(node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const prd = JSON.parse(fs.readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+    const story = prd.userStories.find(s => s.id === '$story_id');
+    if (story) console.log(crypto.createHash('sha256').update(JSON.stringify({id: story.id, criteria: story.acceptanceCriteria})).digest('hex'));
+  " 2>/dev/null || echo "")
+
+  if [[ "$file_hash" != "$prd_hash" ]]; then
+    echo "  🚨 CRITERIA TAMPERED: locked criteria for $story_id differ from PRD"
+    echo "  🔒 Using locked (immutable) criteria for verification"
+    emit_ralph_event "criteria_tampered" "story_id=$story_id"
+  fi
+
+  return 0
+}
+
+# Lock criteria on first run
+ralph_lock_criteria "${PRD_DIR}/prd.json"
+
+# ─── Git auto-reset on failure ──────────────────────────────────────────────
+
+ralph_reset_failed_story() {
+  local story_id="$1"
+  local pre_head="$2"
+
+  if [[ "$AUTO_RESET" != "true" ]]; then
+    return 0
+  fi
+
+  echo "  🔄 Auto-reset: discarding failed commits for $story_id"
+
+  # If we have a worktree, remove it without merging
+  local wt_path="${WORKTREE_DIR:-}/${story_id}"
+  local wt_branch="ralph/${story_id}"
+  if [[ -d "$wt_path" ]]; then
+    git worktree remove "$wt_path" --force 2>/dev/null || rm -rf "$wt_path"
+    git branch -D "$wt_branch" 2>/dev/null || true
+    echo "    Removed worktree: $wt_path"
+  elif [[ -n "$pre_head" ]]; then
+    # Direct branch: reset to pre-story HEAD
+    local current_head
+    current_head=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [[ "$current_head" != "$pre_head" ]]; then
+      git reset --hard "$pre_head" 2>/dev/null || true
+      local reset_count
+      reset_count=$(git rev-list --count "$pre_head".."$current_head" 2>/dev/null || echo "0")
+      echo "    Reset $reset_count commit(s) back to ${pre_head:0:8}"
+    fi
+  fi
+
+  # Unmark story as passed in prd.json
+  node -e "
+    const fs = require('fs');
+    const prd = JSON.parse(fs.readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+    const story = prd.userStories.find(s => s.id === '$story_id');
+    if (story && story.passes) {
+      story.passes = false;
+      fs.writeFileSync('${PRD_DIR}/prd.json', JSON.stringify(prd, null, 2));
+      console.log('    Unmarked $story_id as passed');
+    }
+  " 2>/dev/null || true
+
+  emit_ralph_event "story_reset" "story_id=$story_id" "reason=verification_failed"
+}
+
 # ─── Build agent prompt ──────────────────────────────────────────────────────
 
 build_iteration_prompt() {
@@ -1517,8 +1660,11 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   STALL_KILLED=false
   rm -f "/tmp/ralph_stall_$$"
 
-  # Run Claude with background watchdog for timeout
-  run_claude 2>&1 | tee "$LOG_FILE" &
+  # Record HEAD before Claude runs (for auto-reset on failure)
+  RALPH_PRE_STORY_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+  # Run Claude — redirect to file to avoid flooding context window
+  run_claude > "$LOG_FILE" 2>&1 &
   CLAUDE_PID=$!
 
   # Watchdog: kill if exceeds timeout
@@ -1555,6 +1701,14 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     stall_elapsed=$(( $(date +%s) - ITER_START ))
     emit_ralph_event "stall_detected" "story_id=$STORY_ID" "elapsed_seconds=$stall_elapsed"
   fi
+
+  # Extract verdict lines from log (context window hygiene — only show key results)
+  ralph_extract_verdict() {
+    local log="$1"
+    grep -E "^STATUS:|^VERDICT:|PASS|FAIL|Tests:.*passed|Tests:.*failed|quality.gate|✅|❌|completed|stuck" "$log" 2>/dev/null | tail -15
+  }
+  echo "  📋 Iteration results:"
+  ralph_extract_verdict "$LOG_FILE" | sed 's/^/    /'
 
   # Run after_run hook — failure is logged but not fatal
   run_hook "after_run" "${WORKTREE_PATH:-$(pwd)}" || true
@@ -1643,7 +1797,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
   # Extract cost if available
   if [[ "$TRACK_COST" == "true" ]] && [[ "$USE_MAX_PLAN" != "true" ]]; then
-    ITER_COST=$(grep -oP 'cost: \$\K[0-9.]+' "$LOG_FILE" 2>/dev/null | tail -1 || echo "0")
+    ITER_COST=$(grep -oE 'cost: \$[0-9.]+' "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/cost: \$//' || echo "0")
     TOTAL_COST=$(node -e "console.log(Math.round(($TOTAL_COST + ${ITER_COST:-0}) * 10000) / 10000)")
     echo "  💰 Iteration cost: \$${ITER_COST:-0} | Total: \$$TOTAL_COST"
   fi
@@ -1661,8 +1815,9 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     if [[ "$SKIP_TESTS" == "true" ]]; then GATE_ARGS="$GATE_ARGS --skip-tests"; fi
 
     if ! bash scripts/quality-gate.sh $GATE_ARGS; then
-      echo "  ❌ Quality gate failed — Claude should fix this in the next iteration"
+      echo "  ❌ Quality gate failed"
       GATE_RESULT="failed"
+      ralph_reset_failed_story "$STORY_ID" "$RALPH_PRE_STORY_HEAD"
     else
       echo "  ✅ Quality gate passed"
       STORIES_COMPLETED=$((STORIES_COMPLETED + 1))
@@ -1742,7 +1897,17 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   if [[ "$VERIFY" == "true" ]] && [[ -n "$COMPLETED_STORY_ID" ]] && [[ -f "scripts/generate-proof.sh" ]]; then
     echo "  🔍 Running verification for $COMPLETED_STORY_ID..."
 
+    # Verify criteria integrity before running verification
+    ralph_verify_criteria_integrity "$COMPLETED_STORY_ID" || true
+
     VERIFY_ARGS=("$COMPLETED_STORY_ID" "${PRD_DIR}/prd.json")
+
+    # Pass locked criteria if available
+    LOCKED_CRITERIA="$CRITERIA_LOCK_DIR/${COMPLETED_STORY_ID}.criteria.json"
+    if [[ -f "$LOCKED_CRITERIA" ]]; then
+      VERIFY_ARGS+=("--locked-criteria" "$LOCKED_CRITERIA")
+    fi
+
     if [[ "$VERIFY_RUNTIME" != "true" ]]; then
       VERIFY_ARGS+=("--skip-runtime")
     else
@@ -1750,7 +1915,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
       VERIFY_ARGS+=("--dev-url" "$DEV_URL")
     fi
 
-    if bash scripts/generate-proof.sh "${VERIFY_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    if bash scripts/generate-proof.sh "${VERIFY_ARGS[@]}" >> "$LOG_FILE" 2>&1; then
       # Read verdict
       if [[ -f "proof/$COMPLETED_STORY_ID/verdict.json" ]]; then
         VERIFY_CONFIDENCE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('proof/$COMPLETED_STORY_ID/verdict.json','utf8')).confidence)" 2>/dev/null || echo "0")
@@ -1762,6 +1927,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         else
           VERIFY_RESULT="failed"
           echo "  ❌ Verification failed (confidence: $VERIFY_CONFIDENCE)"
+          ralph_reset_failed_story "$COMPLETED_STORY_ID" "$RALPH_PRE_STORY_HEAD"
         fi
       else
         VERIFY_RESULT="error"
