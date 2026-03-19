@@ -37,6 +37,13 @@
 
 set -euo pipefail
 
+RALPH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source shared libraries
+if [[ -f "$RALPH_SCRIPT_DIR/lib/vercel-logs.sh" ]]; then
+  . "$RALPH_SCRIPT_DIR/lib/vercel-logs.sh"
+fi
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 MAX_ITERATIONS=20
@@ -70,6 +77,7 @@ CONSENSUS=false       # Run consensus gate after review phase
 WORKFLOW_FILE=""      # YAML workflow file (delegates to workflow-runner.sh)
 JSON_OUTPUT=false     # Emit JSON summary at end instead of human-readable
 AUTO_RESET=true       # Git reset failed stories (branch only accumulates successes)
+CHECK_VERCEL=auto     # Check Vercel build/runtime logs (auto=when VERCEL_TOKEN is set)
 STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
@@ -113,6 +121,8 @@ while [[ $# -gt 0 ]]; do
     --consensus)     CONSENSUS=true ;;
     --json)          JSON_OUTPUT=true ;;
     --no-reset)      AUTO_RESET=false ;;
+    --check-vercel)  CHECK_VERCEL=true ;;
+    --skip-vercel)   CHECK_VERCEL=false ;;
     --workflow)      WORKFLOW_FILE="$2"; shift ;;
     --help)
       sed -n '2,35p' "$0"
@@ -2160,6 +2170,19 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
   fi
 
+  # ─── Vercel log check ────────────────────────────────────────────────────
+  VERCEL_SHOULD_CHECK=false
+  if [[ "$CHECK_VERCEL" == "true" ]]; then
+    VERCEL_SHOULD_CHECK=true
+  elif [[ "$CHECK_VERCEL" == "auto" ]] && [[ -n "${VERCEL_TOKEN:-}" ]]; then
+    VERCEL_SHOULD_CHECK=true
+  fi
+
+  if [[ "$VERCEL_SHOULD_CHECK" == "true" ]] && type vercel_diagnose_deployment &>/dev/null; then
+    echo "  🔍 Checking Vercel deployment logs..."
+    vercel_diagnose_deployment "agent_logs" || true
+  fi
+
   # Count files changed in this iteration
   FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo "0")
 
@@ -2286,6 +2309,21 @@ if [[ "$VERIFY" == "true" ]] && [[ -d "proof" ]]; then
     echo "  Review queue:  bash scripts/hartz-land/review-queue.sh"
     echo ""
   fi
+fi
+
+# Show Vercel deployment status
+if [[ -f "agent_logs/vercel-diagnosis.json" ]]; then
+  echo "Vercel:"
+  node -e "
+    const d = JSON.parse(require('fs').readFileSync('agent_logs/vercel-diagnosis.json','utf8'));
+    console.log('  Deployment: ' + d.deployment_state + ' (' + d.deployment_target + ')');
+    console.log('  URL: ' + d.deployment_url);
+    if (d.build_errors.length > 0) console.log('  Build errors: ' + d.build_errors.length);
+    if (d.runtime_errors.length > 0) console.log('  Runtime errors: ' + d.runtime_errors.length);
+    if (d.build_errors.length === 0 && d.runtime_errors.length === 0 && d.deployment_state === 'READY')
+      console.log('  Status: HEALTHY');
+  " 2>/dev/null || true
+  echo ""
 fi
 
 # Show failure digest if any diagnoses were generated
