@@ -17,9 +17,11 @@
 #   --timeout <min>     Per-iteration timeout in minutes (default: 30)
 #   --telemetry         Send telemetry events to Hartz Command API
 #   --telemetry-url <u> Hartz Command server URL (default: http://localhost:3001)
-#   --verify            Run independent verification after each story (generates proof packets)
-#   --verify-runtime    Include Playwright runtime verification (requires running dev server)
-#   --dev-cmd <cmd>     Dev server start command for runtime verification
+#   --skip-verify       Skip independent verification after each story (on by default)
+#   --skip-verify-runtime  Skip Playwright runtime verification (on by default)
+#   --verify            (legacy) Explicitly enable verification (now default)
+#   --verify-runtime    (legacy) Explicitly enable runtime verification (now default)
+#   --dev-cmd <cmd>     Dev server start command for runtime verification (auto-detected from package.json)
 #   --dev-url <url>     Dev server URL (default: http://localhost:3000)
 #   --docker            Run Claude inside Docker container with network isolation
 #   --auto-pr           Auto-create GitHub PR when verification passes (confidence >= 0.9)
@@ -52,8 +54,8 @@ ITER_TIMEOUT=30
 TELEMETRY=false
 TELEMETRY_URL="http://localhost:3001"
 RUN_ID=""
-VERIFY=false
-VERIFY_RUNTIME=false
+VERIFY=true
+VERIFY_RUNTIME=true
 DEV_CMD=""
 DEV_URL="http://localhost:3000"
 USE_DOCKER=false
@@ -94,6 +96,8 @@ while [[ $# -gt 0 ]]; do
     --telemetry-url) TELEMETRY_URL="$2"; shift ;;
     --verify)        VERIFY=true ;;
     --verify-runtime) VERIFY_RUNTIME=true; VERIFY=true ;;
+    --skip-verify)   VERIFY=false; VERIFY_RUNTIME=false ;;
+    --skip-verify-runtime) VERIFY_RUNTIME=false ;;
     --dev-cmd)       DEV_CMD="$2"; shift ;;
     --dev-url)       DEV_URL="$2"; shift ;;
     --docker)        USE_DOCKER=true ;;
