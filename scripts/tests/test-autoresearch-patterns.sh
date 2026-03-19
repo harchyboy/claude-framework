@@ -371,7 +371,7 @@ else
 fi
 
 # Reset called on quality gate failure
-if grep -B2 -A2 'ralph_reset_failed_story' "$RALPH" | grep -q 'Quality gate failed'; then
+if grep -B5 'ralph_reset_failed_story' "$RALPH" | grep -q 'Quality gate failed'; then
   pass "should call reset on quality gate failure"
 else
   fail "should call reset on quality gate failure"

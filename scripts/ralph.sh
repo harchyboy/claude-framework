@@ -1266,6 +1266,200 @@ ralph_reset_failed_story() {
   emit_ralph_event "story_reset" "story_id=$story_id" "reason=verification_failed"
 }
 
+# ─── Automatic failure diagnosis ────────────────────────────────────────────
+
+ralph_diagnose_failure() {
+  # Parse log files for error patterns and write a structured diagnosis
+  # Usage: ralph_diagnose_failure <story_id> <log_file> <failure_type>
+  local story_id="$1"
+  local log_file="$2"
+  local failure_type="${3:-unknown}"  # quality_gate | verification | crash | timeout | stall
+  local diagnosis_file="agent_logs/diagnosis-${story_id}-iter${ITERATION}.json"
+
+  if [[ ! -f "$log_file" ]]; then
+    return 0
+  fi
+
+  node -e "
+    const fs = require('fs');
+    const path = require('path');
+
+    const logContent = fs.readFileSync('$log_file', 'utf8');
+    const lines = logContent.split('\n');
+
+    const diagnosis = {
+      story_id: '$story_id',
+      iteration: $ITERATION,
+      failure_type: '$failure_type',
+      timestamp: new Date().toISOString(),
+      errors: [],
+      stack_traces: [],
+      test_failures: [],
+      compilation_errors: [],
+      summary: '',
+      suggested_action: ''
+    };
+
+    // ── Extract stack traces ────────────────────────────────────────
+    const stackTracePattern = /^\s*(at\s+|Traceback|File\s+\"|Error:|TypeError:|ReferenceError:|SyntaxError:|ImportError:|ModuleNotFoundError:)/;
+    let inStack = false;
+    let currentStack = [];
+    for (const line of lines) {
+      if (stackTracePattern.test(line)) {
+        inStack = true;
+        currentStack.push(line.trim());
+      } else if (inStack && line.trim() === '') {
+        if (currentStack.length > 0) {
+          diagnosis.stack_traces.push(currentStack.join('\n'));
+          currentStack = [];
+        }
+        inStack = false;
+      } else if (inStack) {
+        currentStack.push(line.trim());
+      }
+    }
+    if (currentStack.length > 0) {
+      diagnosis.stack_traces.push(currentStack.join('\n'));
+    }
+    // Keep only last 5 stack traces (most recent are most relevant)
+    diagnosis.stack_traces = diagnosis.stack_traces.slice(-5);
+
+    // ── Extract TypeScript / compilation errors ─────────────────────
+    const tscPattern = /^(.+\.tsx?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)/;
+    const tscPattern2 = /^(.+\.tsx?):\d+:\d+\s*-\s*error\s+(TS\d+):\s*(.+)/;
+    for (const line of lines) {
+      let match = line.match(tscPattern) || line.match(tscPattern2);
+      if (match) {
+        diagnosis.compilation_errors.push({
+          file: match[1].trim(),
+          code: match[match.length - 2] || '',
+          message: match[match.length - 1].trim()
+        });
+      }
+    }
+    // ESLint errors
+    const eslintPattern = /^\s*(.+\.(?:ts|tsx|js|jsx))\s*$/;
+    const eslintErrorLine = /^\s+(\d+):(\d+)\s+(error|warning)\s+(.+?)\s{2,}(.+)/;
+    for (const line of lines) {
+      const m = line.match(eslintErrorLine);
+      if (m && m[3] === 'error') {
+        diagnosis.compilation_errors.push({
+          file: '',
+          code: m[5],
+          message: m[4].trim()
+        });
+      }
+    }
+    diagnosis.compilation_errors = diagnosis.compilation_errors.slice(0, 20);
+
+    // ── Extract test failures ───────────────────────────────────────
+    // Vitest / Jest pattern
+    const testFailPattern = /(?:FAIL|✘|✗|×|FAILED)\s+(.+)/i;
+    const assertPattern = /(?:AssertionError|expect\(|Expected:|Received:|toEqual|toBe|assert)/i;
+    for (const line of lines) {
+      if (testFailPattern.test(line)) {
+        diagnosis.test_failures.push(line.trim());
+      } else if (assertPattern.test(line)) {
+        diagnosis.test_failures.push(line.trim());
+      }
+    }
+    // Pytest pattern
+    const pytestFail = /^FAILED\s+(.+)/;
+    for (const line of lines) {
+      const m = line.match(pytestFail);
+      if (m) diagnosis.test_failures.push(m[0].trim());
+    }
+    diagnosis.test_failures = diagnosis.test_failures.slice(0, 20);
+
+    // ── Extract explicit error messages ─────────────────────────────
+    const errorPatterns = [
+      /(?:^|\s)(?:ERROR|Error|FATAL|fatal|CRITICAL):\s*(.+)/,
+      /(?:^|\s)(?:error\[E\d+\]):\s*(.+)/,  // Rust errors
+      /(?:^|\s)(?:npm ERR!)\s*(.+)/,
+      /(?:^|\s)(?:Command failed|Process exited with code)\s*(.+)/i,
+      /(?:Cannot find module|Module not found)\s*(.+)/i,
+      /(?:ENOENT|EACCES|EPERM):\s*(.+)/,
+      /(?:Connection refused|ECONNREFUSED)\s*(.+)/i,
+    ];
+    for (const line of lines) {
+      for (const pattern of errorPatterns) {
+        const m = line.match(pattern);
+        if (m) {
+          diagnosis.errors.push(line.trim());
+          break;
+        }
+      }
+    }
+    diagnosis.errors = [...new Set(diagnosis.errors)].slice(0, 20);
+
+    // ── Generate summary ────────────────────────────────────────────
+    const parts = [];
+    if (diagnosis.compilation_errors.length > 0) {
+      const first = diagnosis.compilation_errors[0];
+      parts.push(diagnosis.compilation_errors.length + ' compilation error(s): ' + first.message + (first.file ? ' in ' + first.file : ''));
+    }
+    if (diagnosis.test_failures.length > 0) {
+      parts.push(diagnosis.test_failures.length + ' test failure(s): ' + diagnosis.test_failures[0].substring(0, 100));
+    }
+    if (diagnosis.stack_traces.length > 0 && parts.length === 0) {
+      const lastTrace = diagnosis.stack_traces[diagnosis.stack_traces.length - 1];
+      const firstLine = lastTrace.split('\n')[0];
+      parts.push('Runtime error: ' + firstLine.substring(0, 120));
+    }
+    if (diagnosis.errors.length > 0 && parts.length === 0) {
+      parts.push(diagnosis.errors[0].substring(0, 150));
+    }
+    if (parts.length === 0) {
+      parts.push('No specific error pattern detected — check log: $log_file');
+    }
+
+    diagnosis.summary = parts.join('; ');
+
+    // ── Suggest action ──────────────────────────────────────────────
+    if ('$failure_type' === 'timeout') {
+      diagnosis.suggested_action = 'Story exceeded time limit. Consider: splitting into smaller stories, increasing --timeout, or simplifying scope.';
+    } else if ('$failure_type' === 'stall') {
+      diagnosis.suggested_action = 'Agent stalled (no output). Likely stuck on a complex problem. Consider: providing more context, adding hints to PRD notes, or using /debug.';
+    } else if (diagnosis.compilation_errors.length > 0) {
+      diagnosis.suggested_action = 'Fix compilation errors. Most common: missing imports, type mismatches, or referencing undefined variables.';
+    } else if (diagnosis.test_failures.length > 0) {
+      diagnosis.suggested_action = 'Fix failing tests. The implementation does not match acceptance criteria or existing test expectations.';
+    } else if (diagnosis.stack_traces.length > 0) {
+      diagnosis.suggested_action = 'Fix runtime error. Check the stack trace for the root cause — likely a null reference, missing dependency, or configuration issue.';
+    } else {
+      diagnosis.suggested_action = 'Review the full log for context: $log_file';
+    }
+
+    fs.writeFileSync('$diagnosis_file', JSON.stringify(diagnosis, null, 2));
+
+    // Also append to running errors log (JSONL format for easy streaming)
+    const errorLine = JSON.stringify({
+      story_id: diagnosis.story_id,
+      iteration: diagnosis.iteration,
+      failure_type: diagnosis.failure_type,
+      summary: diagnosis.summary,
+      suggested_action: diagnosis.suggested_action,
+      error_count: diagnosis.errors.length,
+      test_failure_count: diagnosis.test_failures.length,
+      compilation_error_count: diagnosis.compilation_errors.length,
+      stack_trace_count: diagnosis.stack_traces.length,
+      timestamp: diagnosis.timestamp
+    });
+    fs.appendFileSync('agent_logs/errors.jsonl', errorLine + '\n');
+
+    // Print summary for console
+    console.log('  📋 Diagnosis: ' + diagnosis.summary.substring(0, 200));
+    if (diagnosis.suggested_action) {
+      console.log('  💡 Action: ' + diagnosis.suggested_action);
+    }
+  " 2>/dev/null || echo "  ⚠️  Diagnosis failed (non-blocking)"
+
+  emit_ralph_event "failure_diagnosed" \
+    "story_id=$story_id" \
+    "failure_type=$failure_type" \
+    "diagnosis_file=$diagnosis_file"
+}
+
 # ─── Build agent prompt ──────────────────────────────────────────────────────
 
 build_iteration_prompt() {
@@ -1719,11 +1913,14 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   if [[ "$CLAUDE_EXIT" -ne 0 ]]; then
     if [[ "$STALL_KILLED" == "true" ]]; then
       echo "  ⏸️  Stall detected: no output for ${STALL_TIMEOUT} minutes — killed agent"
+      ralph_diagnose_failure "$STORY_ID" "$LOG_FILE" "stall"
     elif [[ "$ITER_ELAPSED" -ge "$((TIMEOUT_SECONDS - 5))" ]]; then
       echo "  ⏰ Iteration timed out after ${ITER_TIMEOUT} minutes"
       TIMED_OUT=true
+      ralph_diagnose_failure "$STORY_ID" "$LOG_FILE" "timeout"
     else
-      echo "  ⚠️  Claude exited with error — check $LOG_FILE"
+      echo "  ⚠️  Claude exited with error"
+      ralph_diagnose_failure "$STORY_ID" "$LOG_FILE" "crash"
     fi
     sleep 5
     if [[ "$TIMED_OUT" != "true" ]] && [[ "$STALL_KILLED" != "true" ]]; then
@@ -1817,6 +2014,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     if ! bash scripts/quality-gate.sh $GATE_ARGS; then
       echo "  ❌ Quality gate failed"
       GATE_RESULT="failed"
+      ralph_diagnose_failure "$STORY_ID" "$LOG_FILE" "quality_gate"
       ralph_reset_failed_story "$STORY_ID" "$RALPH_PRE_STORY_HEAD"
     else
       echo "  ✅ Quality gate passed"
@@ -1927,6 +2125,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         else
           VERIFY_RESULT="failed"
           echo "  ❌ Verification failed (confidence: $VERIFY_CONFIDENCE)"
+          ralph_diagnose_failure "$COMPLETED_STORY_ID" "$LOG_FILE" "verification"
           ralph_reset_failed_story "$COMPLETED_STORY_ID" "$RALPH_PRE_STORY_HEAD"
         fi
       else
@@ -2021,6 +2220,14 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
     const done = prd.userStories.filter(s => s.passes).length;
     const stuck = prd.userStories.filter(s => s.stuck).length;
     const remaining = total - done - stuck;
+
+    // Load failure diagnoses
+    let failures = [];
+    try {
+      const lines = fs.readFileSync('agent_logs/errors.jsonl', 'utf8').trim().split('\n');
+      failures = lines.map(l => JSON.parse(l));
+    } catch (e) {}
+
     process.stdout.write(JSON.stringify({
       status: 'completed',
       iterations: $ITERATION,
@@ -2028,6 +2235,7 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
       total_cost: ${TOTAL_COST:-0},
       stories: { total, completed: done, stuck, remaining },
       verification: { proof_packets: $PROOF_COUNT, avg_confidence: $AVG_CONFIDENCE },
+      failures: failures,
       timestamp: new Date().toISOString()
     }, null, 2) + '\n');
   "
@@ -2076,6 +2284,38 @@ if [[ "$VERIFY" == "true" ]] && [[ -d "proof" ]]; then
     echo "Verification:"
     echo "  Proof packets: $PROOF_COUNT"
     echo "  Review queue:  bash scripts/hartz-land/review-queue.sh"
+    echo ""
+  fi
+fi
+
+# Show failure digest if any diagnoses were generated
+if [[ -f "agent_logs/errors.jsonl" ]]; then
+  ERROR_COUNT=$(wc -l < "agent_logs/errors.jsonl" | tr -d ' ')
+  if [[ "$ERROR_COUNT" -gt 0 ]]; then
+    echo "═══════════════════════════════════════"
+    echo "FAILURE DIGEST ($ERROR_COUNT failures)"
+    echo "═══════════════════════════════════════"
+    echo ""
+    node -e "
+      const fs = require('fs');
+      const lines = fs.readFileSync('agent_logs/errors.jsonl', 'utf8').trim().split('\n');
+      lines.forEach((line, i) => {
+        try {
+          const d = JSON.parse(line);
+          console.log('  ' + (i+1) + '. [' + d.failure_type.toUpperCase() + '] ' + d.story_id);
+          console.log('     ' + d.summary.substring(0, 150));
+          console.log('     Action: ' + d.suggested_action.substring(0, 120));
+          const counts = [];
+          if (d.compilation_error_count > 0) counts.push(d.compilation_error_count + ' compile errors');
+          if (d.test_failure_count > 0) counts.push(d.test_failure_count + ' test failures');
+          if (d.stack_trace_count > 0) counts.push(d.stack_trace_count + ' stack traces');
+          if (counts.length > 0) console.log('     Details: ' + counts.join(', '));
+          console.log('');
+        } catch (e) {}
+      });
+    " 2>/dev/null || true
+    echo "  Full diagnoses: agent_logs/diagnosis-*.json"
+    echo "  Error stream:   agent_logs/errors.jsonl"
     echo ""
   fi
 fi
