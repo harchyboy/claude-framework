@@ -9,14 +9,24 @@
 #   --skip-tests    Skip test execution
 #   --fix           Auto-fix lint issues where possible
 #   --coverage      Run tests with coverage and check thresholds
+#   --json          Output results as JSON to stdout (human output to stderr)
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/json-output.sh"
 
 STRICT=false
 SKIP_TESTS=false
 AUTO_FIX=false
 CHECK_COVERAGE=false
 FAILED=false
+JSON_OUTPUT=false
+
+# Accumulate check results for JSON output
+declare -a QG_CHECK_NAMES=()
+declare -a QG_CHECK_STATUSES=()
+declare -a QG_CHECK_DETAILS=()
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -25,6 +35,7 @@ while [[ $# -gt 0 ]]; do
     --skip-tests) SKIP_TESTS=true ;;
     --fix)        AUTO_FIX=true ;;
     --coverage)   CHECK_COVERAGE=true ;;
+    --json)       JSON_OUTPUT=true ;;
     *) echo "Unknown option: $1" ;;
   esac
   shift
@@ -38,16 +49,32 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-pass() { echo -e "${GREEN}✅ $1${NC}"; }
-fail() { echo -e "${RED}❌ $1${NC}"; FAILED=true; }
-warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
-info() { echo -e "${CYAN}🔍 $1${NC}"; }
+qg_add_check() {
+  QG_CHECK_NAMES+=("$1")
+  QG_CHECK_STATUSES+=("$2")
+  QG_CHECK_DETAILS+=("${3:-}")
+}
 
-echo ""
-echo "═══════════════════════════════════════"
-echo "QUALITY GATE"
-echo "═══════════════════════════════════════"
-echo ""
+pass() {
+  json_output_log "${GREEN}✅ $1${NC}"
+  qg_add_check "$1" "pass"
+}
+fail() {
+  json_output_log "${RED}❌ $1${NC}"
+  FAILED=true
+  qg_add_check "$1" "fail"
+}
+warn() {
+  json_output_log "${YELLOW}⚠️  $1${NC}"
+  qg_add_check "$1" "warn"
+}
+info() { json_output_log "${CYAN}🔍 $1${NC}"; }
+
+json_output_log ""
+json_output_log "═══════════════════════════════════════"
+json_output_log "QUALITY GATE"
+json_output_log "═══════════════════════════════════════"
+json_output_log ""
 
 # ─── Secret detection ────────────────────────────────────────────────────────
 
@@ -285,16 +312,39 @@ fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
-echo ""
-echo "───────────────────────────────────────"
+if [[ "$JSON_OUTPUT" == "true" ]]; then
+  json_output_init
+  if [[ "$FAILED" == "true" ]]; then
+    json_output_add "status" "FAILED"
+  else
+    json_output_add "status" "PASSED"
+  fi
+  json_output_add "timestamp" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # Build checks array
+  CHECKS_JSON="["
+  for i in "${!QG_CHECK_NAMES[@]}"; do
+    [[ "$i" -gt 0 ]] && CHECKS_JSON+=","
+    CHECKS_JSON+="{\"name\":$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" -- "${QG_CHECK_NAMES[$i]}"),\"status\":\"${QG_CHECK_STATUSES[$i]}\"}"
+  done
+  CHECKS_JSON+="]"
+  json_output_add "checks" "$CHECKS_JSON" --raw
+
+  json_output_emit
+  json_output_cleanup
+  [[ "$FAILED" == "true" ]] && exit 1 || exit 0
+fi
+
+json_output_log ""
+json_output_log "───────────────────────────────────────"
 
 if [[ "$FAILED" == "true" ]]; then
-  echo -e "${RED}QUALITY GATE: FAILED${NC}"
-  echo ""
-  echo "Fix all errors before committing."
-  echo "Search 'ERROR:' in output above for machine-parseable failures."
+  json_output_log "${RED}QUALITY GATE: FAILED${NC}"
+  json_output_log ""
+  json_output_log "Fix all errors before committing."
+  json_output_log "Search 'ERROR:' in output above for machine-parseable failures."
   exit 1
 else
-  echo -e "${GREEN}QUALITY GATE: PASSED${NC}"
+  json_output_log "${GREEN}QUALITY GATE: PASSED${NC}"
   exit 0
 fi

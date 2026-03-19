@@ -28,6 +28,7 @@ RESET='\033[0m'
 
 WORKFLOW_FILE=""
 DRY_RUN=false
+JSON_OUTPUT=false
 ONLY_PHASE=""
 SKIP_PHASES=()
 RESULTS_DIR=""
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --dry-run)    DRY_RUN=true ;;
+    --json)       JSON_OUTPUT=true ;;
     --phase)      ONLY_PHASE="$2"; shift ;;
     --skip-phase) SKIP_PHASES+=("$2"); shift ;;
     --results-dir) RESULTS_DIR="$2"; shift ;;
@@ -623,7 +625,25 @@ main() {
   done
 
   if [[ "$DRY_RUN" != "true" ]]; then
-    print_summary
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+      local wf_status="PASSED"
+      [[ $overall_exit -ne 0 ]] && wf_status="FAILED"
+      node -e "process.stdout.write(JSON.stringify({
+        run_id: '$RUN_ID',
+        workflow: '$WORKFLOW_FILE',
+        status: '$wf_status',
+        phases_run: $PHASES_RUN,
+        phases_passed: $PHASES_PASSED,
+        phases_failed: $PHASES_FAILED,
+        agents_run: $AGENTS_RUN,
+        agents_passed: $AGENTS_PASSED,
+        agents_failed: $AGENTS_FAILED,
+        results_dir: '$RESULTS_DIR',
+        timestamp: new Date().toISOString()
+      }, null, 2) + '\n')"
+    else
+      print_summary
+    fi
   fi
 
   return $overall_exit

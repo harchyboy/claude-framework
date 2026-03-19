@@ -331,11 +331,11 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
   echo "  \"max_depth\": $MAX_DEPTH,"
   echo "  \"changed_files\": ["
   first=true
-  echo "$CHANGED_FILES" | while read -r f; do
+  while read -r f; do
     [[ -z "$f" ]] && continue
     if [[ "$first" == "true" ]]; then first=false; else echo ","; fi
     printf '    "%s"' "$f"
-  done
+  done <<< "$CHANGED_FILES"
   echo ""
   echo "  ],"
   echo "  \"symbols\": ["

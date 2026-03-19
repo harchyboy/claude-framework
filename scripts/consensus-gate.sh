@@ -40,6 +40,7 @@ THRESHOLD=75
 THRESHOLD_EXPLICIT=false
 JSON_FILE=""
 QUIET=false
+OUTPUT_JSON=false
 
 # ─── Colours ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --quiet)
+      QUIET=true
+      shift
+      ;;
+    --output-json)
+      OUTPUT_JSON=true
       QUIET=true
       shift
       ;;
@@ -277,9 +283,13 @@ if [[ "$QUIET" != "true" ]]; then
   log ""
 fi
 
-# ─── Quiet mode: single-word output ──────────────────────────────────────────
+# ─── Quiet / JSON output ─────────────────────────────────────────────────────
 
-[[ "$QUIET" == "true" ]] && echo "$STATUS"
+if [[ "$OUTPUT_JSON" == "true" ]]; then
+  echo "$RESULT"
+elif [[ "$QUIET" == "true" ]]; then
+  echo "$STATUS"
+fi
 
 # ─── Exit code ───────────────────────────────────────────────────────────────
 

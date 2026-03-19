@@ -68,6 +68,7 @@ STALL_TIMEOUT=5  # Minutes of no output before killing agent (0=disabled)
 BACKOFF_ENABLED=true  # Exponential backoff on same-story retries
 CONSENSUS=false       # Run consensus gate after review phase
 WORKFLOW_FILE=""      # YAML workflow file (delegates to workflow-runner.sh)
+JSON_OUTPUT=false     # Emit JSON summary at end instead of human-readable
 STALL_GRACE=60   # Seconds of grace period at startup before stall detection activates
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
@@ -109,6 +110,7 @@ while [[ $# -gt 0 ]]; do
     --use-local)     USE_LOCAL=true ;;
     --no-local)      USE_LOCAL=false ;;
     --consensus)     CONSENSUS=true ;;
+    --json)          JSON_OUTPUT=true ;;
     --workflow)      WORKFLOW_FILE="$2"; shift ;;
     --help)
       sed -n '2,35p' "$0"
@@ -1828,6 +1830,43 @@ ELAPSED=$(( (END_TIME - START_TIME) / 60 ))
 
 FINAL_REMAINING=$(count_pending "${PRD_DIR}/prd.json")
 emit_ralph_event "session_end"
+
+# ─── JSON summary ───────────────────────────────────────────────────────────
+
+if [[ "$JSON_OUTPUT" == "true" ]]; then
+  PROOF_COUNT=0
+  AVG_CONFIDENCE=0
+  if [[ "$VERIFY" == "true" ]] && [[ -d "proof" ]]; then
+    PROOF_COUNT=$(ls proof/*/verdict.json 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    if [[ "$PROOF_COUNT" -gt 0 ]]; then
+      AVG_CONFIDENCE=$(node -e "
+        const fs = require('fs');
+        const files = fs.readdirSync('proof').filter(d => fs.existsSync('proof/' + d + '/verdict.json'));
+        const confs = files.map(d => JSON.parse(fs.readFileSync('proof/' + d + '/verdict.json','utf8')).confidence);
+        console.log(Math.round(confs.reduce((a,b)=>a+b,0)/confs.length*100)/100);
+      " 2>/dev/null || echo "0")
+    fi
+  fi
+
+  node -e "
+    const fs = require('fs');
+    const prd = JSON.parse(fs.readFileSync('${PRD_DIR}/prd.json', 'utf8'));
+    const total = prd.userStories.length;
+    const done = prd.userStories.filter(s => s.passes).length;
+    const stuck = prd.userStories.filter(s => s.stuck).length;
+    const remaining = total - done - stuck;
+    process.stdout.write(JSON.stringify({
+      status: 'completed',
+      iterations: $ITERATION,
+      elapsed_minutes: $ELAPSED,
+      total_cost: ${TOTAL_COST:-0},
+      stories: { total, completed: done, stuck, remaining },
+      verification: { proof_packets: $PROOF_COUNT, avg_confidence: $AVG_CONFIDENCE },
+      timestamp: new Date().toISOString()
+    }, null, 2) + '\n');
+  "
+  exit 0
+fi
 
 echo ""
 echo "═══════════════════════════════════════"
