@@ -9,6 +9,7 @@
 #   --github-token    GitHub PAT for the GitHub MCP (or set GITHUB_TOKEN env var)
 #   --memory-path     Path for shared memory file (default: ~/.hartz-claude-framework/shared-memory.jsonl)
 #   --skip-playwright Skip Playwright MCP
+#   --skip-agent-browser Skip agent-browser CLI install
 #   --skip-github     Skip GitHub MCP
 #   --skip-memory     Skip Memory MCP
 #   --skip-thinking   Skip Sequential Thinking MCP
@@ -25,6 +26,7 @@ GLOBAL_SCOPE=false
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 MEMORY_PATH=""
 SKIP_PLAYWRIGHT=false
+SKIP_AGENT_BROWSER=false
 SKIP_GITHUB=false
 SKIP_MEMORY=false
 SKIP_THINKING=false
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --github-token)    GITHUB_TOKEN="$2"; shift ;;
     --memory-path)     MEMORY_PATH="$2"; shift ;;
     --skip-playwright) SKIP_PLAYWRIGHT=true ;;
+    --skip-agent-browser) SKIP_AGENT_BROWSER=true ;;
     --skip-github)     SKIP_GITHUB=true ;;
     --skip-memory)     SKIP_MEMORY=true ;;
     --skip-thinking)   SKIP_THINKING=true ;;
@@ -118,7 +121,63 @@ INSTALLED=0
 SKIPPED=0
 FAILED=0
 
-# ─── Install Playwright MCP ──────────────────────────────────────────────────
+# ─── Install agent-browser (primary browser automation) ──────────────────────
+
+if [[ "$SKIP_AGENT_BROWSER" != "true" ]]; then
+  h1 "Installing agent-browser CLI (primary browser automation)..."
+
+  # Install the skill via npx skills
+  if command -v npx > /dev/null 2>&1; then
+    info "Installing agent-browser skill for Claude Code..."
+    npx -y skills add vercel-labs/agent-browser -y 2>/dev/null && ok "agent-browser skill installed" || warn "Skill install failed — install manually: npx skills add vercel-labs/agent-browser"
+
+    # Install the CLI globally
+    info "Installing agent-browser CLI..."
+    npm install -g agent-browser 2>/dev/null && ok "agent-browser CLI installed" || warn "CLI install failed — install manually: npm i -g agent-browser"
+
+    # On Windows, download the binary manually since npm doesn't bundle it
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        AB_VERSION=$(npm view agent-browser version 2>/dev/null || echo "0.21.4")
+        AB_BIN_DIR="$(npm root -g)/agent-browser/bin"
+        AB_EXE="$AB_BIN_DIR/agent-browser-win32-x64.exe"
+
+        if [[ ! -f "$AB_EXE" ]]; then
+          info "Downloading Windows binary (v$AB_VERSION)..."
+          curl -sL -o "$AB_EXE" "https://github.com/vercel-labs/agent-browser/releases/download/v${AB_VERSION}/agent-browser-win32-x64.exe" 2>/dev/null
+
+          if [[ -f "$AB_EXE" ]]; then
+            ok "Windows binary downloaded"
+          else
+            warn "Binary download failed or was quarantined by Windows Defender"
+            warn "If Defender blocks it, add an exclusion:"
+            warn "  Windows Security → Virus & Threat Protection → Exclusions → Add"
+            warn "  Exclude folder: $(cygpath -w "$AB_BIN_DIR")"
+            warn "Then re-run this script."
+          fi
+        fi
+
+        # Install Chrome for agent-browser
+        info "Installing Chrome for agent-browser..."
+        npx agent-browser install 2>/dev/null || warn "Chrome install failed — run 'npx agent-browser install' manually after fixing Defender exclusion"
+        ;;
+      *)
+        # Unix: binary should be bundled, just install Chrome
+        info "Installing Chrome for agent-browser..."
+        npx agent-browser install 2>/dev/null || agent-browser install 2>/dev/null || warn "Chrome install failed — run 'agent-browser install' manually"
+        ;;
+    esac
+
+    INSTALLED=$((INSTALLED + 1))
+  else
+    err "npx not found — cannot install agent-browser"
+    FAILED=$((FAILED + 1))
+  fi
+else
+  SKIPPED=$((SKIPPED + 1))
+fi
+
+# ─── Install Playwright MCP (fallback browser automation) ───────────────────
 
 if [[ "$SKIP_PLAYWRIGHT" != "true" ]]; then
   h1 "Installing Playwright MCP (Microsoft)..."
@@ -273,6 +332,24 @@ if [[ "$SKIP_FILESYSTEM" != "true" ]]; then
   fi
 else
   SKIPPED=$((SKIPPED + 1))
+fi
+
+# ─── Install Context Hub MCP ─────────────────────────────────────────────
+
+h1 "Installing Context Hub MCP (API docs for agents)..."
+
+if claude mcp add $SCOPE_FLAG context-hub -- npx -y @aisuite/chub mcp 2>/dev/null; then
+  ok "Context Hub MCP installed"
+  INSTALLED=$((INSTALLED + 1))
+else
+  claude mcp remove context-hub 2>/dev/null || true
+  if claude mcp add $SCOPE_FLAG context-hub -- npx -y @aisuite/chub mcp 2>/dev/null; then
+    ok "Context Hub MCP installed (replaced existing)"
+    INSTALLED=$((INSTALLED + 1))
+  else
+    err "Failed to install Context Hub MCP"
+    FAILED=$((FAILED + 1))
+  fi
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

@@ -43,6 +43,14 @@ Repo:            [REPLACE]
 - Claim tasks by updating owner BEFORE starting work
 - Never poll after spawning — wait for reports
 
+### Browser automation
+- **Primary**: Use `agent-browser` CLI (Rust-based, accessibility-tree-first, faster for AI agents)
+  - Commands: `agent-browser open <url>`, `agent-browser snapshot -i`, `agent-browser click @e1`, etc.
+  - Skill reference: `.agents/skills/agent-browser/SKILL.md`
+- **Fallback**: Use Playwright MCP only if agent-browser fails or is unavailable
+  - Playwright runs as an MCP server, agent-browser runs as a CLI via Bash tool
+- Always try agent-browser first. Switch to Playwright if agent-browser errors on 3+ commands.
+
 ## MODEL ROUTING
 
 | Task | Model |

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "skills": {
+    "agent-browser": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "computedHash": "6f2c9c0ab62a0d030780c51b955e4f0ec561581d59fa123daad1c87a7748b85a"
+    },
+    "dogfood": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "computedHash": "df1c342a55d5e6a37276efd32a46984270a764563ff2445527f380860596bcc4"
+    },
+    "electron": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "computedHash": "3d181f9030fed4355ff97626b3a75d3e324091563595b8950592347e49e3e238"
+    },
+    "slack": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "computedHash": "b6d2f40ec99896e8b787f1f402dbe96108d656e97f9e6f1b239de76f9065719d"
+    },
+    "vercel-sandbox": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "computedHash": "671b75f67dffa9ed48143d2f91542abbb7b9465e1d41568ad0a05e9341f7542c"
+    }
+  }
+}
