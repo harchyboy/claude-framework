@@ -32,6 +32,7 @@
 #   --use-local         Enable Ollama pre-generation for test/doc stories (default: on)
 #   --no-local          Disable Ollama auto-routing, always use Claude
 #   --consensus         Run consensus gate after review (requires --review)
+#   --prd <path>        Target a specific PRD directory (skip auto-discovery)
 #   --workflow <file>   Delegate to workflow-runner.sh with a YAML workflow file
 #   --help              Show this help
 
@@ -85,6 +86,7 @@ STALL_GRACE=60   # Seconds of grace period at startup before stall detection act
 START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
 CONFIG_LAST_MTIME=""   # Track ralph-config.json mtime for dynamic reload
+PRD_DIR_OVERRIDE=""    # --prd flag: target a specific PRD directory
 
 # Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -122,6 +124,7 @@ while [[ $# -gt 0 ]]; do
     --use-local)     USE_LOCAL=true ;;
     --no-local)      USE_LOCAL=false ;;
     --consensus)     CONSENSUS=true ;;
+    --prd)           PRD_DIR_OVERRIDE="$2"; shift ;;
     --json)          JSON_OUTPUT=true ;;
     --no-reset)      AUTO_RESET=false ;;
     --check-vercel)  CHECK_VERCEL=true ;;
@@ -1080,17 +1083,43 @@ clean_stale_worktrees() {
 PRD_DIR=""
 AGENT_PROMPT=""
 
-# Look for PRDs with incomplete stories
-for dir in scripts/ralph-moss/prds/*/; do
-  if [[ -f "$dir/prd.json" ]]; then
-    incomplete=$(count_pending "$dir/prd.json")
-    if [[ "$incomplete" -gt 0 ]]; then
-      PRD_DIR="$dir"
-      AGENT_PROMPT="$dir/AGENT_PROMPT.md"
-      break
-    fi
+# Use --prd override if provided, otherwise auto-discover
+if [[ -n "${PRD_DIR_OVERRIDE:-}" ]]; then
+  # Normalize: accept both dir path and prd.json path
+  if [[ -f "$PRD_DIR_OVERRIDE" && "$(basename "$PRD_DIR_OVERRIDE")" == "prd.json" ]]; then
+    PRD_DIR="$(dirname "$PRD_DIR_OVERRIDE")/"
+  elif [[ -d "$PRD_DIR_OVERRIDE" ]]; then
+    PRD_DIR="${PRD_DIR_OVERRIDE%/}/"
+  else
+    echo "❌ --prd path not found: $PRD_DIR_OVERRIDE"
+    exit 1
   fi
-done
+
+  if [[ ! -f "${PRD_DIR}prd.json" ]]; then
+    echo "❌ No prd.json in: $PRD_DIR"
+    exit 1
+  fi
+
+  incomplete=$(count_pending "${PRD_DIR}prd.json")
+  if [[ "$incomplete" -eq 0 ]]; then
+    echo "✅ All stories in $PRD_DIR are already complete."
+    exit 0
+  fi
+
+  AGENT_PROMPT="${PRD_DIR}AGENT_PROMPT.md"
+else
+  # Auto-discover: first PRD with incomplete stories
+  for dir in scripts/ralph-moss/prds/*/; do
+    if [[ -f "$dir/prd.json" ]]; then
+      incomplete=$(count_pending "$dir/prd.json")
+      if [[ "$incomplete" -gt 0 ]]; then
+        PRD_DIR="$dir"
+        AGENT_PROMPT="$dir/AGENT_PROMPT.md"
+        break
+      fi
+    fi
+  done
+fi
 
 if [[ -z "$PRD_DIR" ]]; then
   echo "❌ No PRDs with incomplete stories found."
