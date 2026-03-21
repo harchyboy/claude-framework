@@ -638,9 +638,13 @@ collect_proof_packet() {
 
   # POST to telemetry if enabled
   if [[ "$TELEMETRY" == "true" ]] && [[ -n "${RUN_ID:-}" ]]; then
+    local proof_auth=()
+    if [[ -n "${HARTZ_AUTH_TOKEN:-}" ]]; then
+      proof_auth=(-H "Authorization: Bearer ${HARTZ_AUTH_TOKEN}")
+    fi
     curl -s --connect-timeout 2 --max-time 5 \
-      -X POST "${TELEMETRY_URL}/api/ralph/proof" \
-      -H "Content-Type: application/json" \
+      -X POST "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}/proof" \
+      -H "Content-Type: application/json" "${proof_auth[@]}" \
       -d "$json_content" 2>/dev/null || true
   fi
 
@@ -791,6 +795,12 @@ emit_ralph_event() {
   local event_type="$1"
   shift
 
+  # Build auth header if token is available
+  local auth_header=()
+  if [[ -n "${HARTZ_AUTH_TOKEN:-}" ]]; then
+    auth_header=(-H "Authorization: Bearer ${HARTZ_AUTH_TOKEN}")
+  fi
+
   case "$event_type" in
     session_start)
       local json
@@ -804,9 +814,9 @@ emit_ralph_event() {
       local response
       response=$(curl -s --connect-timeout 2 --max-time 5 \
         -X POST "${TELEMETRY_URL}/api/ralph/runs" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" "${auth_header[@]}" \
         -d "$json" 2>/dev/null) || { echo "  ⚠️  Telemetry: failed to create run" >&2; return; }
-      RUN_ID=$(echo "$response" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.parse(d).id)}catch{}})" 2>/dev/null || echo "")
+      RUN_ID=$(echo "$response" | node -e "process.stdin.on('data',d=>{try{const j=JSON.parse(d);console.log(j.data?.id??j.id??'')}catch{}})" 2>/dev/null || echo "")
       if [[ -n "$RUN_ID" ]]; then
         echo "  📡 Telemetry: run created (id=$RUN_ID)"
       fi
@@ -822,9 +832,9 @@ emit_ralph_event() {
       local response
       response=$(curl -s --connect-timeout 2 --max-time 5 \
         -X POST "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}/iterations" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" "${auth_header[@]}" \
         -d "$json" 2>/dev/null) || { echo "  ⚠️  Telemetry: failed to create iteration" >&2; return; }
-      ITERATION_ID=$(echo "$response" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.parse(d).id)}catch{}})" 2>/dev/null || echo "")
+      ITERATION_ID=$(echo "$response" | node -e "process.stdin.on('data',d=>{try{const j=JSON.parse(d);console.log(j.data?.id??j.id??'')}catch{}})" 2>/dev/null || echo "")
       ;;
 
     iteration_end)
@@ -837,7 +847,7 @@ emit_ralph_event() {
         "$@")
       curl -s --connect-timeout 2 --max-time 5 \
         -X PUT "${TELEMETRY_URL}/api/ralph/iterations/${ITERATION_ID}" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" "${auth_header[@]}" \
         -d "$json" 2>/dev/null || true
       # Also update run counts
       local run_json
@@ -846,7 +856,7 @@ emit_ralph_event() {
         "$@")
       curl -s --connect-timeout 2 --max-time 5 \
         -X PUT "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" "${auth_header[@]}" \
         -d "$run_json" 2>/dev/null || true
       ITERATION_ID=""
       ;;
@@ -861,7 +871,7 @@ emit_ralph_event() {
         "$@")
       curl -s --connect-timeout 2 --max-time 5 \
         -X PUT "${TELEMETRY_URL}/api/ralph/iterations/${ITERATION_ID}" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" "${auth_header[@]}" \
         -d "$json" 2>/dev/null || true
       ITERATION_ID=""
       ;;
@@ -877,7 +887,7 @@ emit_ralph_event() {
         "$@")
       curl -s --connect-timeout 2 --max-time 5 \
         -X PUT "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" "${auth_header[@]}" \
         -d "$json" 2>/dev/null || true
       echo "  📡 Telemetry: run completed (id=$RUN_ID)"
       ;;
@@ -889,7 +899,7 @@ emit_ralph_event() {
         json=$(build_json "event=$event_type" "$@")
         curl -s --connect-timeout 2 --max-time 5 \
           -X PUT "${TELEMETRY_URL}/api/ralph/runs/${RUN_ID}" \
-          -H "Content-Type: application/json" \
+          -H "Content-Type: application/json" "${auth_header[@]}" \
           -d "$json" 2>/dev/null || true
       fi
       ;;

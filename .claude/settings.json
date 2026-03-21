@@ -84,17 +84,6 @@
         ]
       }
     ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"/c/Users/craig/Documents/Projects/hartz-command/scripts/hooks/stop.py\""
-          }
-        ]
-      }
-    ],
     "SubagentStart": [
       {
         "matcher": "",
