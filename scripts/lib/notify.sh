@@ -9,6 +9,35 @@
 #   NOTIFICATION_WEBHOOK_URL — Generic webhook (receives JSON POST)
 #   NOTIFY_ENABLED           — Set to "false" to disable (default: auto-detect)
 
+# ─── Auto-fetch webhook URLs from Hartz Command API ──────────────────────
+
+notify_fetch_command_settings() {
+  # Only fetch once per session
+  [[ "${_NOTIFY_SETTINGS_FETCHED:-}" == "true" ]] && return 0
+
+  local command_url="${HARTZ_COMMAND_URL:-http://localhost:3001}"
+  local auth_header=""
+  if [[ -n "${HARTZ_AUTH_TOKEN:-}" ]]; then
+    auth_header="-H \"Authorization: Bearer ${HARTZ_AUTH_TOKEN}\""
+  fi
+
+  local settings
+  settings=$(eval curl -s --connect-timeout 2 --max-time 5 \
+    "$auth_header" \
+    "${command_url}/api/settings" 2>/dev/null) || { _NOTIFY_SETTINGS_FETCHED=true; return 1; }
+
+  # Extract webhook URLs if not already set via env vars
+  if [[ -z "${SLACK_WEBHOOK_URL:-}" ]]; then
+    SLACK_WEBHOOK_URL=$(echo "$settings" | node -e "process.stdin.on('data',d=>{try{const s=JSON.parse(d);console.log(s.data?.slack_webhook_url||'')}catch{console.log('')}})" 2>/dev/null || echo "")
+    export SLACK_WEBHOOK_URL
+  fi
+
+  _NOTIFY_SETTINGS_FETCHED=true
+}
+
+# Attempt to fetch settings from Command on first load
+notify_fetch_command_settings 2>/dev/null || true
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 notify_is_enabled() {

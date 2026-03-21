@@ -35,6 +35,7 @@
 #   --prd <path>        Target a specific PRD directory (skip auto-discovery)
 #   --background        Detach and run in background with logging (survives terminal close)
 #   --log-file <path>   Log file for background mode (default: auto-generated in ~/.hartz-claude-framework/logs/)
+#   --fetch-config      Fetch launch config from Hartz Command API before starting
 #   --workflow <file>   Delegate to workflow-runner.sh with a YAML workflow file
 #   --help              Show this help
 
@@ -91,6 +92,7 @@ CONFIG_LAST_MTIME=""   # Track ralph-config.json mtime for dynamic reload
 PRD_DIR_OVERRIDE=""    # --prd flag: target a specific PRD directory
 BACKGROUND=false       # --background: detach and run as background process
 BG_LOG_FILE=""         # --log-file: custom log path for background mode
+FETCH_CONFIG=false     # --fetch-config: read settings from Hartz Command API
 
 # Save original args for --background re-exec
 ORIGINAL_ARGS=("$@")
@@ -134,6 +136,7 @@ while [[ $# -gt 0 ]]; do
     --prd)           PRD_DIR_OVERRIDE="$2"; shift ;;
     --background)    BACKGROUND=true ;;
     --log-file)      BG_LOG_FILE="$2"; shift ;;
+    --fetch-config)  FETCH_CONFIG=true ;;
     --json)          JSON_OUTPUT=true ;;
     --no-reset)      AUTO_RESET=false ;;
     --check-vercel)  CHECK_VERCEL=true ;;
@@ -147,6 +150,62 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# ─── Fetch config from Hartz Command API ────────────────────────────────────
+
+if [[ "$FETCH_CONFIG" == "true" ]]; then
+  COMMAND_URL="${HARTZ_COMMAND_URL:-http://localhost:3001}"
+  FC_AUTH=""
+  if [[ -n "${HARTZ_AUTH_TOKEN:-}" ]]; then
+    FC_AUTH="-H \"Authorization: Bearer ${HARTZ_AUTH_TOKEN}\""
+  fi
+
+  # Try to detect project ID from Command API
+  PROJECT_NAME=$(basename "$(pwd)")
+  FC_RESPONSE=$(eval curl -s --connect-timeout 3 --max-time 5 \
+    "$FC_AUTH" \
+    "${COMMAND_URL}/api/projects" 2>/dev/null) || FC_RESPONSE=""
+
+  if [[ -n "$FC_RESPONSE" ]]; then
+    FC_PROJECT_ID=$(echo "$FC_RESPONSE" | node -e "
+      process.stdin.on('data', d => {
+        try {
+          const r = JSON.parse(d);
+          const p = (r.data || r).find(p => p.slug === '$PROJECT_NAME' || p.name === '$PROJECT_NAME');
+          console.log(p?.id || '');
+        } catch { console.log(''); }
+      });" 2>/dev/null || echo "")
+
+    if [[ -n "$FC_PROJECT_ID" ]]; then
+      FC_CONFIG=$(eval curl -s --connect-timeout 3 --max-time 5 \
+        "$FC_AUTH" \
+        "${COMMAND_URL}/api/ralph/config/${FC_PROJECT_ID}" 2>/dev/null) || FC_CONFIG=""
+
+      if [[ -n "$FC_CONFIG" ]]; then
+        # Apply config values (only if not already set via CLI flags)
+        FC_MODEL=$(echo "$FC_CONFIG" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.parse(d).data?.model||'')}catch{console.log('')}})" 2>/dev/null)
+        if [[ -n "$FC_MODEL" ]] && [[ -z "$MODEL_OVERRIDE" ]]; then
+          MODEL_OVERRIDE="claude-${FC_MODEL}-4-6"
+          echo "  📡 Config from Command: model=$FC_MODEL"
+        fi
+
+        # Apply boolean options
+        FC_OPTIONS=$(echo "$FC_CONFIG" | node -e "process.stdin.on('data',d=>{try{console.log(JSON.stringify(JSON.parse(d).data?.options||{}))}catch{console.log('{}')}})" 2>/dev/null)
+        if echo "$FC_OPTIONS" | node -e "process.stdin.on('data',d=>{process.exit(JSON.parse(d).quality_gate?0:1)})" 2>/dev/null; then
+          QUALITY_GATE=true
+        fi
+        if echo "$FC_OPTIONS" | node -e "process.stdin.on('data',d=>{process.exit(JSON.parse(d).auto_pr?0:1)})" 2>/dev/null; then
+          AUTO_PR=true
+        fi
+        if echo "$FC_OPTIONS" | node -e "process.stdin.on('data',d=>{process.exit(JSON.parse(d).review?0:1)})" 2>/dev/null; then
+          REVIEW=true
+        fi
+
+        echo "  📡 Config fetched from Hartz Command (project=$PROJECT_NAME, id=$FC_PROJECT_ID)"
+      fi
+    fi
+  fi
+fi
 
 # ─── Background mode ────────────────────────────────────────────────────────
 # If --background is set, re-exec this script detached with output to a log file
