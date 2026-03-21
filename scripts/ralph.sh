@@ -33,6 +33,8 @@
 #   --no-local          Disable Ollama auto-routing, always use Claude
 #   --consensus         Run consensus gate after review (requires --review)
 #   --prd <path>        Target a specific PRD directory (skip auto-discovery)
+#   --background        Detach and run in background with logging (survives terminal close)
+#   --log-file <path>   Log file for background mode (default: auto-generated in ~/.hartz-claude-framework/logs/)
 #   --workflow <file>   Delegate to workflow-runner.sh with a YAML workflow file
 #   --help              Show this help
 
@@ -87,6 +89,11 @@ START_TIME=$(date +%s)
 STALE_LOCK_HOURS=2
 CONFIG_LAST_MTIME=""   # Track ralph-config.json mtime for dynamic reload
 PRD_DIR_OVERRIDE=""    # --prd flag: target a specific PRD directory
+BACKGROUND=false       # --background: detach and run as background process
+BG_LOG_FILE=""         # --log-file: custom log path for background mode
+
+# Save original args for --background re-exec
+ORIGINAL_ARGS=("$@")
 
 # Override max_iterations only if first positional arg is a number
 if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
@@ -125,6 +132,8 @@ while [[ $# -gt 0 ]]; do
     --no-local)      USE_LOCAL=false ;;
     --consensus)     CONSENSUS=true ;;
     --prd)           PRD_DIR_OVERRIDE="$2"; shift ;;
+    --background)    BACKGROUND=true ;;
+    --log-file)      BG_LOG_FILE="$2"; shift ;;
     --json)          JSON_OUTPUT=true ;;
     --no-reset)      AUTO_RESET=false ;;
     --check-vercel)  CHECK_VERCEL=true ;;
@@ -138,6 +147,57 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# ─── Background mode ────────────────────────────────────────────────────────
+# If --background is set, re-exec this script detached with output to a log file
+
+if [[ "$BACKGROUND" == "true" ]]; then
+  LOG_DIR="$HOME/.hartz-claude-framework/logs"
+  PID_DIR="$HOME/.hartz-claude-framework/pids"
+  mkdir -p "$LOG_DIR" "$PID_DIR"
+
+  PROJECT_NAME=$(basename "$(pwd)")
+  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+  if [[ -z "$BG_LOG_FILE" ]]; then
+    BG_LOG_FILE="$LOG_DIR/${PROJECT_NAME}_${TIMESTAMP}.log"
+  fi
+
+  # Rebuild args without --background and --log-file
+  RALPH_ARGS=()
+  SKIP_NEXT=false
+  for arg in "${ORIGINAL_ARGS[@]}"; do
+    if [[ "$SKIP_NEXT" == "true" ]]; then
+      SKIP_NEXT=false
+      continue
+    fi
+    case "$arg" in
+      --background) continue ;;
+      --log-file)   SKIP_NEXT=true; continue ;;
+      *) RALPH_ARGS+=("$arg") ;;
+    esac
+  done
+
+  # Launch detached — survives terminal close
+  (
+    nohup bash "${BASH_SOURCE[0]}" "${RALPH_ARGS[@]}" >> "$BG_LOG_FILE" 2>&1 &
+    RALPH_PID=$!
+    echo "$RALPH_PID" > "$PID_DIR/${PROJECT_NAME}.pid"
+    # Disown so it survives shell exit
+    disown "$RALPH_PID" 2>/dev/null || true
+  )
+
+  RALPH_PID=$(cat "$PID_DIR/${PROJECT_NAME}.pid")
+
+  echo "🚀 Ralph running in background"
+  echo "   PID:  $RALPH_PID"
+  echo "   Log:  $BG_LOG_FILE"
+  echo ""
+  echo "   Watch:  tail -f $BG_LOG_FILE"
+  echo "   Stop:   kill $RALPH_PID"
+  echo "   Status: ps -p $RALPH_PID"
+  exit 0
+fi
 
 # ─── Workflow delegation ────────────────────────────────────────────────────
 # If --workflow is set, delegate entirely to workflow-runner.sh and exit
