@@ -215,6 +215,12 @@ build_ralph_cmd() {
 
   local cmd="cd '$project_path'"
   cmd+=" && git pull --rebase 2>/dev/null || true"
+
+  # Pass auth token if available (for Command API telemetry)
+  if [[ -n "${HARTZ_AUTH_TOKEN:-}" ]]; then
+    cmd+=" && export HARTZ_AUTH_TOKEN='${HARTZ_AUTH_TOKEN}'"
+  fi
+
   cmd+=" && bash scripts/ralph.sh $MAX_ITERATIONS"
   cmd+=" --model '$MODEL'"
   cmd+=" --timeout $TIMEOUT"
