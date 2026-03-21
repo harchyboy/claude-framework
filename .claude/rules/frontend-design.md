@@ -2,8 +2,10 @@
 # Applies to: **/*.html, **/*.css, **/*.scss, **/*.jsx, **/*.tsx, **/*.vue, **/*.svelte
 # Source: Anthropic's frontend-design skill (anthropics/skills)
 #
-# These rules activate alongside components.md for any frontend file.
-# components.md handles structure and accessibility; this file handles design quality.
+# These rules activate alongside components.md and design-system.md for any frontend file.
+# components.md handles structure and accessibility.
+# design-system.md handles the technical contract: tokens, registry, and primitives.
+# This file handles design quality and aesthetic direction.
 
 Create distinctive, production-grade frontend interfaces with high design quality. Generates creative, polished code and UI design that avoids generic AI aesthetics.
 
@@ -49,3 +51,23 @@ Match implementation complexity to the aesthetic vision:
 - Maximalist designs need elaborate code with extensive animations and effects
 - Minimalist or refined designs need restraint, precision, and careful attention to spacing, typography, and subtle details
 - Elegance comes from executing the vision well, not from adding more
+
+## Design System Integration
+
+When a project has a design system set up (see `design-system.md`):
+
+- **Tokens are your palette** — all color, spacing, typography, and radii values come from `tokens/design-tokens.json`. Express your aesthetic direction through token selection and composition, not arbitrary values.
+- **shadcn/ui is your component vocabulary** — compose from registry components. Customize via Tailwind classes and `cn()`, not by forking or rewriting primitives.
+- **Figma MCP is your design source** — when a Figma file exists, read it before generating. The design is the spec; don't improvise over it.
+- **Magic UI MCP generates variations** — request 2-3 variations for key components, then select the best fit for the aesthetic direction.
+
+## Tooling Quick Reference
+
+| Need | Tool |
+|------|------|
+| Scaffold a new frontend project | `/ui-scaffold` skill |
+| Build a component from a design | `workflows/ui-component.yaml` |
+| Generate a component from a prompt | Magic UI MCP (`mcp__magic-ui__21st_magic_component_builder`) |
+| Discover registry components | shadcn MCP server |
+| Read a Figma design | Figma MCP server (`FIGMA_API_KEY` required) |
+| Visual regression testing | `agent-browser screenshot` |

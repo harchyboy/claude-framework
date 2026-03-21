@@ -1,0 +1,137 @@
+name: ui-component
+description: Component development workflow — read design, generate, review for quality and accessibility, iterate
+version: "1.0"
+
+variables:
+  component_name: ""
+  figma_url: ""
+  description: ""
+  branch: feature-branch
+
+phases:
+  - name: design-context
+    description: Gather design context from Figma or description
+    execution: sequential
+    agents:
+      - name: design-reader
+        command: |
+          Read the design context for component "{{component_name}}".
+          {{#if figma_url}}
+          Use the Figma MCP server to read the design at {{figma_url}}.
+          Extract: colors, typography, spacing, layout structure, interactive states, responsive behavior.
+          Map extracted values to existing design tokens in tokens/design-tokens.json.
+          Flag any values that don't exist in the token system yet.
+          {{else}}
+          Use the description: {{description}}
+          Check the project's design tokens in tokens/design-tokens.json for available values.
+          {{/if}}
+          Output a component specification with: props, variants, states, responsive breakpoints, and token mappings.
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 5m
+
+  - name: check-registry
+    description: Check if the component (or parts of it) already exists in shadcn/ui
+    execution: sequential
+    agents:
+      - name: registry-checker
+        command: |
+          Before building "{{component_name}}" from scratch:
+          1. Check if shadcn/ui has this component or a close equivalent via the shadcn MCP server
+          2. Check if the project already has components in src/components/ui/ that could be composed
+          3. If a registry component exists, install it with `npx shadcn@latest add <component>`
+          4. Output: list of registry components to use, list of custom parts to build
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 3m
+
+  - name: generate
+    description: Generate the component using Magic UI or manual implementation
+    execution: sequential
+    agents:
+      - name: component-builder
+        command: |
+          Build the "{{component_name}}" component following the design spec from phase 1
+          and using registry components identified in phase 2.
+
+          Requirements:
+          - Use shadcn/ui conventions: cn() utility, className prop, forwardRef
+          - All styling via Tailwind utility classes mapped to design tokens
+          - All interactive patterns via Radix UI primitives
+          - Handle loading, error, and empty states
+          - Responsive at 375px, 768px, 1280px
+          - Include TypeScript types for all props
+
+          If Magic UI MCP is available, use it to generate variations and pick the best.
+          Otherwise, implement manually following the spec.
+
+          Write tests:
+          - Unit test for prop handling and variant rendering
+          - Accessibility test (keyboard nav, ARIA attributes)
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 15m
+
+  - name: review
+    description: Parallel review for quality, accessibility, and design compliance
+    execution: parallel
+    quality_gate:
+      consensus_threshold: 75
+      required_checks: [accessibility]
+    agents:
+      - name: accessibility
+        command: |
+          Review "{{component_name}}" for WCAG 2.1 AA compliance:
+          - Keyboard navigation (Tab, Enter, Escape, Arrow keys)
+          - Screen reader support (ARIA labels, roles, live regions)
+          - Color contrast (4.5:1 text, 3:1 large text, 3:1 UI components)
+          - Focus indicators visible and meaningful
+          - Touch target size (44x44px minimum)
+          - Reduced motion support (@prefers-reduced-motion)
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 5m
+
+      - name: design-compliance
+        command: |
+          Review "{{component_name}}" against design-system.md rules:
+          - All values come from design tokens (no hardcoded colors, spacing, radii)
+          - Uses Radix primitives for interactive patterns (no hand-rolled a11y)
+          - Uses shadcn/ui registry components where available
+          - Follows shadcn conventions (cn(), className, forwardRef)
+          - Component is under 200 lines
+          - No inline styles for themeable properties
+          {{#if figma_url}}
+          Compare against the Figma design — flag visual discrepancies.
+          {{/if}}
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 5m
+
+      - name: typescript-check
+        command: |
+          Review "{{component_name}}" for TypeScript correctness:
+          - Props interface exported and complete
+          - No `any` types
+          - Event handlers properly typed
+          - Generic types where appropriate (e.g., Table<TData>)
+          - Refs properly typed with forwardRef
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 5m
+
+  - name: visual-verify
+    description: Visual verification via browser screenshot (optional)
+    execution: sequential
+    condition: command -v agent-browser >/dev/null 2>&1
+    agents:
+      - name: visual-check
+        command: |
+          If a dev server is running, use agent-browser to:
+          1. Navigate to the component's page or storybook
+          2. Take screenshots at 375px, 768px, and 1280px widths
+          3. Compare against the Figma design (if available)
+          4. Flag any visual discrepancies
+        type: claude
+        model: claude-sonnet-4-6
+        timeout: 5m

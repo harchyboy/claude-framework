@@ -92,6 +92,9 @@ Repo:            [REPLACE]
 | Review with consensus gate | `/review` (auto) or `ralph.sh --review --consensus` |
 | Dry-run a workflow | `workflow-runner.sh workflows/<name>.yaml --dry-run` |
 | Debug via debate pattern | `workflow-runner.sh workflows/debug-investigation.yaml --var bug_description="..."` |
+| Scaffold a new frontend app | `/ui-scaffold` (SaaS, dashboard, landing, minimal templates) |
+| Build a UI component from design | `workflow-runner.sh workflows/ui-component.yaml --var component_name="..."` |
+| Generate a component from prompt | Magic UI MCP (`mcp__magic-ui__21st_magic_component_builder`) |
 
 ## TOKEN COMPRESSION (RTK)
 
@@ -117,3 +120,6 @@ enters the context window. Saves 60-90% tokens on common dev commands.
 - Code standards: `docs/CODE-STANDARDS.md`
 - Failed approaches: `docs/failed-approaches.md`
 - Hartz Land guide: `docs/HARTZ-LAND-GUIDE.md`
+- Design system rules: `.claude/rules/design-system.md`
+- Frontend design quality: `.claude/rules/frontend-design.md`
+- UI scaffold skill: `.claude/skills/ui-scaffold/SKILL.md`
