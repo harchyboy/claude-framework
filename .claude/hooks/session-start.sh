@@ -47,6 +47,15 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fi
 fi
 
+# ─── Last session continuity ──────────────────────────────────────────────────
+
+if [[ -f "$PROJECT_DIR/.claude/handoff/last-session.md" ]]; then
+  echo "<framework-context source=\"last-session\">"
+  cat "$PROJECT_DIR/.claude/handoff/last-session.md"
+  echo "</framework-context>"
+  echo ""
+fi
+
 # ─── Current project state ────────────────────────────────────────────────────
 
 if [[ -f "$PROJECT_DIR/PROGRESS.md" ]]; then

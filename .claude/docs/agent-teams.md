@@ -36,6 +36,61 @@ Wave 5 (sequential): review, documentation, cleanup
 ```
 Each wave's tasks run in parallel. Waves execute sequentially.
 
+## Iterative retrieval pattern (subagent accuracy)
+
+When a subagent returns results, don't blindly accept — evaluate and iterate:
+
+```
+Cycle 1: Orchestrator sends query + objective context to subagent
+         Subagent returns initial findings
+         Orchestrator evaluates: sufficient? accurate? complete?
+
+Cycle 2: If insufficient, orchestrator sends follow-up with:
+         - What was missing from the first response
+         - Additional context the subagent needs
+         - Specific files or areas to investigate
+         Subagent returns refined findings
+
+Cycle 3: Final iteration if needed (max 3 cycles)
+         After 3 cycles, accept best result or escalate
+```
+
+Key principles:
+- **Pass objective context, not just queries.** Subagent only knows the literal query,
+  not WHY you need the information. Include the purpose.
+- **Max 3 cycles.** If 3 rounds don't produce sufficient results, the query is wrong
+  or the task needs a different approach.
+- **Each cycle narrows scope.** Don't repeat the same query — refine it based on what
+  the previous response revealed.
+
+Example:
+```
+# BAD — subagent has no context
+Agent: "Find all API routes"
+
+# GOOD — subagent understands the objective
+Agent: "Find all API routes that handle user authentication.
+        I need this to audit auth middleware coverage.
+        Focus on routes in src/api/ that accept credentials
+        or return tokens."
+```
+
+## Sequential phase pattern (large features)
+
+For complex tasks, chain agents through explicit phases with file-based handoffs:
+
+```
+Phase 1: RESEARCH    → .claude/handoff/research-summary.md
+Phase 2: PLAN        → .claude/handoff/plan.md
+Phase 3: IMPLEMENT   → code changes (committed)
+Phase 4: REVIEW      → .claude/handoff/review-comments.md
+Phase 5: VERIFY      → done or loop back to Phase 3
+```
+
+Each agent gets ONE clear input file and produces ONE clear output file.
+Outputs become inputs for the next phase. This eliminates context ambiguity
+and allows different models per phase (Haiku for research, Sonnet for implement).
+
 ---
 
 ## Self-organising Worker Preamble

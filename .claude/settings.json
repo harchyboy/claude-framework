@@ -1,4 +1,12 @@
 {
+  "env": {
+    "MAX_THINKING_TOKENS": "10000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
+    "HCF_HOOK_PROFILE": "standard",
+    "HCF_GOVERNANCE_CAPTURE": "0",
+    "HCF_PATTERN_EXTRACTION": "0",
+    "HCF_SKIP_MCP_HEALTH": "0"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -16,6 +24,55 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/blast-radius-check.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/mcp-health-check.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/mcp-failure-tracker.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/governance-capture.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/session-persist.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pattern-extractor.sh"
           }
         ]
       }

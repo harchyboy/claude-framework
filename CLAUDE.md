@@ -95,8 +95,13 @@ Repo:            [REPLACE]
 | Scaffold a new frontend app | `/ui-scaffold` (SaaS, dashboard, landing, minimal templates) |
 | Build a UI component from design | `workflow-runner.sh workflows/ui-component.yaml --var component_name="..."` |
 | Generate a component from prompt | Magic UI MCP (`mcp__magic-ui__21st_magic_component_builder`) |
+| Strategic compaction | `/compact` (saves state, then compacts at a logical boundary) |
+| Switch Claude mode | `source scripts/claude-modes.sh` then `claude-review`, `claude-debug`, etc. |
+| Resolve build errors | Spawn `go-build-resolver`, `rust-build-resolver`, `python-build-resolver`, or `cpp-build-resolver` agent |
 
-## TOKEN COMPRESSION (RTK)
+## TOKEN OPTIMIZATION
+
+### RTK (Rust Token Killer)
 
 RTK (Rust Token Killer) is installed as a PreToolUse hook. It automatically rewrites
 Bash commands (`git`, `ls`, `find`, `pytest`, etc.) to strip noise before output
@@ -106,6 +111,64 @@ enters the context window. Saves 60-90% tokens on common dev commands.
 - Hook: `.claude/hooks/rtk-rewrite.py`
 - Config: `~/AppData/Roaming/rtk/config.toml`
 - Check savings: `rtk gain`
+
+### Token Cost Controls (env vars in settings.json)
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `MAX_THINKING_TOKENS` | `10000` | Cap extended thinking (vs 31,999 default) — ~70% cost reduction |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | `50` | Compact at 50% context (vs 95% default) — prevents mid-task compaction |
+
+### Strategic Compaction
+
+Use `/compact` at natural boundaries instead of relying on auto-compaction.
+Good times: after research, after debugging, before switching areas.
+Bad times: mid-implementation, mid-debugging.
+
+## HOOK PROFILES
+
+Control hook aggressiveness via `HCF_HOOK_PROFILE` env var:
+
+| Profile | Behaviour |
+|---------|-----------|
+| `minimal` | Safety-critical hooks only (blast-radius, pre-commit) |
+| `standard` | Balanced quality + safety (default) |
+| `strict` | All hooks + extra reminders |
+
+Disable individual hooks: `HCF_DISABLED_HOOKS="pre:bash:rtk,post:edit:governance"`
+
+## GOVERNANCE & OBSERVABILITY
+
+| Feature | Env var | Default |
+|---------|---------|---------|
+| Governance audit trail | `HCF_GOVERNANCE_CAPTURE` | `0` (off) |
+| Pattern extraction (continuous learning) | `HCF_PATTERN_EXTRACTION` | `0` (off) |
+| MCP health monitoring | `HCF_SKIP_MCP_HEALTH` | `0` (on) |
+
+- Governance logs to `.claude/governance/audit.log`
+- Pattern extraction appends to `docs/lessons-learned.md`
+- MCP health tracks server failures and warns before repeat calls
+
+## SESSION CONTINUITY
+
+Sessions automatically persist state via `SessionEnd` hooks:
+- `.claude/handoff/session-state.json` — structured metrics
+- `.claude/handoff/last-session.md` — human-readable summary
+- Loaded automatically on next `SessionStart`
+
+## CLAUDE MODES
+
+Source `scripts/claude-modes.sh` in your shell profile for mode-based aliases:
+
+| Alias | Mode | Behaviour |
+|-------|------|-----------|
+| `claude-dev` | Development | Standard rules (default) |
+| `claude-review` | Code review | Read-only, finding-focused |
+| `claude-research` | Research | Exploration, no file writes |
+| `claude-debug` | Debug | Systematic 4-phase investigation |
+| `claude-lean` | Lean | Minimal token usage |
+
+Custom modes: create `~/.claude/contexts/<name>.md`
 
 ## REFERENCE DOCS (read on demand, not every turn)
 
